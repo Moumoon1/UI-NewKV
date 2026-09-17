@@ -1,0 +1,6 @@
+interface:
+  display_name: "KV UI 换肤"
+  short_description: "替换新 KV，并按业务显著性为 Figma 活动页副本换肤，按需迁移 KV 画风"
+  default_prompt: "使用 $kv-ui-theme-adapter，根据我提供的新 KV，为这个 Figma 链接中当前选中的活动页复制副本、替换 KV，并完整执行 Phase 0–7 的分析、试色、换肤与验收门禁；不得调整布局、字体、文案和信息结构。"
+policy:
+  allow_implicit_invocation: true
