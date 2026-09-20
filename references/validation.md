@@ -19,7 +19,7 @@ inspect → kv-style-check → kv-analysis → preflight → clone-and-kv
 - `kvStyleComparison` 在配色方案与任何写入前完成，包含新旧 KV 的画风差异证据及原 UI 冲突检查；模式不是仅由颜色、IP 更换或深浅变化触发。
 
 - `preflightThemeDecision=pass` 早于首次 UI 写色。
-- `requestedUiMode` 和 `targetUiModeSource` 与用户要求一致；指定深／浅色时，最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖。`sourceUiMode` 有原稿证据，`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式；未指定时有自动判断依据。
+- `sourceKvTone/sourceUiMode/targetKvTone` 均有独立证据；`paletteProposal` 的数量与角色符合《配色方案提案》，`paletteSelection` 有用户明确选择，最终 `targetUiMode/hueStrategy` 与所选方案一致。最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖；`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式。
 - `representativeNodeIds` 早于代表试色产生。
 - `representativeCoverage` 覆盖全部非等价按钮/氛围材质、状态及需要不同方案的背景；全页实际实例清单与最终上下文核对数量一致，不能只验一类代表。
 - `representativeMutatedNodeIds` 只包含完整场景的白名单、必要后代及预登记共享背景通道；只读依赖不等于写权限。
@@ -161,7 +161,7 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 1. 核对 `kvAnalysis.colorAnchors` 的名称、原图坐标、真实像素与空间角色，以及 `surfaceFamilyPlan` 和角色 Recipe 的引用。样本与锚点名称/角色不符、没有来源依据或来源角色不匹配，返回 Phase 2/3，不以“同属暖色、材质相同”放行。
 2. 将 KV 原始区域与最终页面背景、卡片、容器和主要按钮/CTA 并排看彩色 1:1。分开记录原 Paint RGB、最终合成代表样本与冷暖/色相倾向；不要从字形抗锯齿、亮边或最鲜艳像素取代表色。按 `surfaceFamilyPlan.hueRelationshipPlan` 检查：默认同一或相近色相家族，明度、彩度与材质仍须形成可辨层次和醒目操作，不能要求按钮与背景同 Hex。
-3. 检查深浅转换后的环境家族是否仍成立，已有氛围/纹理/反射有没有把大面积颜色带偏。`kv-contrast` 须有 KV 明确风格化撞色或用户要求的证据，并实际呈现清楚的颜色反差和主辅分工；普通景物多色、仅各自“来自 KV”、仅色值不同不能通过。既不统一又不形成明确撞色的淡蓝/淡绿大面积搭配为 FAIL。同时检查 Icon/按钮与 KV/真实宿主是否协调；金属色不以“够黄”判断成立，具体按《颜色决策规则》第 8 节。真正近中性/极暗样本以实际 RGB、冷暖和视觉倾向判断，不使用不稳定的单一 Hue 或固定角度阈值。
+3. 检查深浅转换后的环境家族是否仍成立，已有氛围/纹理/反射有没有把大面积颜色带偏。`complementary` 方案须绑定本次 `kvPrimaryHue`、原始对立色、最终候选和用户选择，并实际呈现清楚的按钮/高亮反差及主辅分工；普通景物多色、仅各自“来自 KV”、仅色值不同不能通过。背景和卡片保持统一环境家族，不能形成既不统一又无明确按钮反差的淡蓝/淡绿大面积搭配。同时检查 Icon/按钮与 KV/真实宿主是否协调；金属色不以“够黄”判断成立，具体按《颜色决策规则》第 8 节。真正近中性/极暗样本以实际 RGB、冷暖和视觉倾向判断，不使用不稳定的单一 Hue 或固定角度阈值。
 4. 彩色模糊图与缩略图检查全页累计色彩面积：主家族仍须主导，局部植被/反光/强调色不能经过大面积和高频重复成为无依据的第二主底色；撞色方案仍须清楚呈现反差和面积主次。灰度用于明暗，不能代替这项彩色检查。
 
 记录锚点、实际节点/区域、截图、合成贡献与结论。真实家族漂移或关键疑点未验证时为 `FAIL → Phase 3/5/6`；返回受影响配方并使相关门禁失效。文字可读、目标通道数值正确及原稿关系一致均不能覆盖该 FAIL。

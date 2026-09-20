@@ -238,7 +238,7 @@ spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/polic
 - 原稿未变化时，复用已经完成的视觉单元登记表、关系图、通道分类和灰度分析；颜色配方变化不重建结构关系。每次局部修正先用 `impact` 列闭包，按完整单元一次读回/截图/复验，其他有效证据保留；共享背景实际影响全页时仍复验全部相关单元。最终全页检查不能省略。记录分析、写入、读回传输、截图及验收各段实际耗时，再评价性能，不把本地脚本耗时当作整次换肤耗时。
 
 - 普通换肤复用完整快照、样式/材质分组及真实承载映射，不为每个阶段重新输出整树；原稿首次与最终、副本结构变化后和最终需完整核对。中间按具体操作与依赖读回，未变快照不再次传输；截断结果不能冒充完整文件。只读分析在依赖独立时合并调用，写入、读回和依赖变化保持顺序。
-- 从全实例清单按实际材质/状态/背景等价关系选最少代表，同组只试一个完整场景。试色接近全页操作量时先检查分组是否过碎；非等价项仍补试，不为省时合并。明确方向先执行一套有依据方案，仅对失败或关键疑点增加对照，不固定生成三套全页方案。
+- 从全实例清单按实际材质/状态/背景等价关系选最少代表，同组只试一个完整场景。试色接近全页操作量时先检查分组是否过碎；非等价项仍补试，不为省时合并。Phase 3 可以按《配色方案提案》展示 4 套或 2 套只读色板；用户选定后，真实 Figma 试色只执行这一套完整方案，仅对失败或关键疑点增加局部对照，不把全部候选都写进页面。
 - 用 `batch-plan` 合并同一阶段、同一有效门禁组的原子操作，默认每批至多 64 项、约 48KB，是可调起点。每批输入只带涉及的节点映射/操作，不反复带全页映射和大快照；不把 Phase 5 与 Phase 6 合并，不把 detach/clone 混入颜色批次。实际 API 限制或耗时决定调整，超时后先读回，不盲目重发。
 
 - 大树传输先核对本次接口预算。本次实测 `use_figma.code` 上限 50,000 字符，返回文本约 20,500 字符会截断；代码预算建议留到 45,000，分片使用至多 17,500 ASCII 字符。操作数预算之外还须检查包含 helper 的实际代码长度。颜色批次复用 `snapshot_fingerprint.js` 与 `figma_apply_color_diff.js`；生成 after 指纹前须把已声明目标 RGB(A) 规范为 Figma 原生 float32，避免 Fill 自动同步 Vector region 后因 double/float32 表达差异误报冲突，实际 before 仍精确保留。只传原子属性的 before/after 指纹和精确颜色差异，在实际节点完整 Paint/Vector 数据副本上应用，不能把差异片段直接覆盖为完整 Paint。支持普通属性标量与混色文字范围；Fill 引发的 Vector region 自动同步仅在完整 after 指纹吻合时作为完成项跳过，否则仍为冲突。
@@ -301,32 +301,33 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 - `visualIntentProfile`、颜色角色、环境/主体/材质/高光证据。
 - `adaptationMode=color-only/style-adaptation` 及画风差异证据；启用画风迁移时记录 `visualLanguage` 的体积、材质、光影、边缘与纹理证据及角色分配，不默认手绘或任何特定画风。
-- `requestedUiMode`、`targetUiModeSource=user/kv-inference`，以及 `source/targetHeroEdgeTone`、`source/targetUiMode`、`source/targetSurfaceDepth` 与 `themeTransition`。
+- `sourceKvTone/sourceUiMode/targetKvTone`、`requestedUiMode`，以及 `source/targetHeroEdgeTone`、`candidateTargetUiModes/candidateSurfaceDepths`；半透明卡按实际合成表面判断 UI 模式，不从 KV 深浅或 Paint Alpha 直接推断。
 - `uiContinuationPalette`、`highlightOnlyColors`、光照方向与材质空间模式；在既有 `kvAnalysis` 内保留有真实像素/区域依据的 `colorAnchors`，区分稳定环境、环境光、主体与反光。
+- 按《配色方案提案》从锚点整理 3–5 个来源色及 `kvPrimaryHue`，生成规定的 4 套或 2 套完整只读方案，写入 `themeDecision.paletteProposal`；本阶段不复制页面、不替换 KV、不写 UI。
 
 #### 通过条件
 
-目标深浅符合用户明确指定；未指定时，自动判断由稳定环境场、暗部连续性、接缝、主体曝光性质和整页灰度共同支持，不由 KV 底部或中央高光单独决定。两种来源均须完成 KV 色彩与衔接分析，原稿模式仍按实际 UI 判断，再据此确定跨模式规则。
+旧/新 KV tone 与原 UI mode 均有独立证据；新 KV 深浅由稳定环境场、暗部连续性、接缝、主体曝光性质和整页灰度共同支持，不由 KV 底部或中央高光单独决定。方案数量和角色内容符合《配色方案提案》，且每套均有来源锚点、代表 Hex、角色映射和风险说明。尚未得到用户选择时状态为 `awaiting-user-palette-choice`，在此处暂停后续写入。
 
-### Phase 3：换肤方案预检
+### Phase 3：用户选定方案与换肤预检
 
 完整执行《颜色决策规则》，形成 `themeDecision`。
 
 #### 必须产出
 
-- 先依据原稿灰度与业务语义建立不含 Hue 的 `semanticPriorityMap`、`targetSalienceOrder`、`roleLightnessPlan` 和 `targetLuminanceTopology`，再生成下面的具体颜色候选。
-- 按不确定程度生成覆盖现有角色的完整候选方案，记录数量依据、最终方案、逐角色理由与实际考虑的淘汰理由；不为凑三套制造无意义方案。
+- 展示 `themeDecision.paletteProposal` 中全部适用方案并等待用户选择。记录 `paletteSelection.status=selected`、方案 ID、原始指令和选择时间；用户未选择时禁止继续本 Phase 的配方冻结和任何 Figma 写入。
+- 先依据原稿灰度与业务语义建立不含 Hue 的 `semanticPriorityMap`、`targetSalienceOrder`、`roleLightnessPlan` 和 `targetLuminanceTopology`，再把用户选定的关系色板展开为具体颜色配方。`targetUiMode` 和 `hueStrategy` 必须与选定方案一致，不由 AI 在预检中偷偷换成另一套。
 - 表面、卡片氛围、文字阶梯、标题、关键数据、Icon 图形与底托、标签、Tab、小按钮和 CTA 的独立 Paint Recipe；表面由 `surfaceFamilyPlan` 引用 KV 锚点并明确家族/层级，其他角色在自己的 Recipe 引用来源；存在底托时，记录其颜色来源与承托关系。按《颜色决策规则》第 3.0 节冻结其中的 `hueRelationshipPlan`，将默认相近家族或有依据的撞色关系、面积主次及可见反差写进 `theme-consistency` 的 acceptance 和场景配方依赖，不能只登记“各角色都来自 KV”。
 - `colorClarityPlan`：记录第 3.2 节浅→浅保留条件是否适用及对应范围，结合 KV 明暗/色彩力度与实际宿主确定按钮/CTA/Icon 的突出方向；记录页面各层、主要操作、文字与状态应达到的彩度、感知明度、受光感和对比关系及渲染检查方法；用户授权参考设计师版本时，包含同角色参考研究与可迁移范围。
 - 按钮背景与浅/深文字的组合候选及真实背景对比度计划。
 - 画风迁移时，`styleAdaptationPlan` 须包含原形状家族、风格载体、逐属性允许差异与裁切安全范围。
 - 第 5.1 节 `ruleLedger`、全量 `colorManifest` 分类和覆盖差集校验通过；规则清单及目标在任何 UI 写入前冻结，场景引用同一指纹。
 - 冻结 `visualUnits`、同色关系及对应对比关系；可比较的同宿主强弱顺序进入 `emphasisOrders`。整组配方的计划快照先通过关系预检，普通写入与局部修正继承同一套约束。
-- `preflightThemeDecision=pass`。
+- `preflightThemeDecision=pass`，并绑定 `paletteSelection.schemeId` 与所选方案指纹。
 
 #### 通过条件
 
-候选以整页关系比较；CTA 和主要操作拥有正确显著性；色相不由题材或材质标签机械推出；旧 UI 色相未进入新方案。背景、卡片、主要按钮/CTA 的色相关系满足第 3.0 节；跨家族方案没有 KV 风格化撞色证据或明确用户要求时，预检为 FAIL。
+用户已明确选定一个方案；其来源锚点、模式、表面与交互关系完整，CTA 和主要操作拥有正确显著性；色相不由题材或材质标签机械推出，旧 UI 色相未进入新方案。背景、卡片、主要按钮/CTA 的色相关系满足第 3.0 节；`complementary` 方案以用户固定候选约定和本次 `kvPrimaryHue` 为依据，不要求 KV 自身预先存在撞色，但必须保持对立色集中在按钮/CTA/突出高亮、表面环境家族统一。
 
 ### Phase 4：复制并替换 KV
 
@@ -341,7 +342,7 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 #### 通过条件
 
-原稿未改变；只有一个副本；新 KV 全图已真实显示在 Hero 安全窗口内且无拉伸；Hero 外框、下方 UI 布局及功能叠层受保护；代表节点白名单在首次 UI 写色前确定。
+原稿未改变；只有一个副本；新 KV 已按 `kvFitPlan.fitMode` 和选定尺度真实显示且无拉伸：`preserve-scale-bottom-crop` 允许仅截去下方超高部分，只有用户明确要求完整显示时才要求四边全部可见；Hero 外框、下方 UI 布局及功能叠层受保护；代表节点白名单在首次 UI 写色前确定。
 
 ### Phase 5：代表性试色与视觉门禁
 
