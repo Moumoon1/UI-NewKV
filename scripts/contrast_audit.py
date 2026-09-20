@@ -33,11 +33,13 @@ def contrast(a, b):
 
 def displayed_color(doc, spec, images):
     """Normal-blend solid stacks, or verified native screenshot pixels."""
-    if set(spec) == {'layers'}:
+    if set(spec) in ({'layers'}, {'host', 'layers'}):
         layers = spec['layers']
         if not isinstance(layers, list) or not layers:
             raise ValueError('nonempty bottom-to-top solid layers required')
-        result = [0., 0., 0.]
+        if 'host' in spec and set(spec['host']) != {'image', 'xy'}:
+            raise ValueError('mixed host must be a verified native screenshot pixel')
+        result = displayed_color(doc, spec['host'], images) if 'host' in spec else [0., 0., 0.]
         for i, layer in enumerate(layers):
             paint = at(doc, layer['colorPath'].rsplit('/', 1)[0])
             if (not isinstance(paint, dict) or paint.get('type') != 'SOLID' or
@@ -53,7 +55,7 @@ def displayed_color(doc, spec, images):
                 raise ValueError('duplicate alpha would weaken a layer twice')
             for path in paths:
                 alpha *= unit(at(doc, path))
-            if i == 0 and alpha != 1:
+            if i == 0 and 'host' not in spec and alpha != 1:
                 raise ValueError('solid stack must start on an actual opaque host')
             result = [fg * alpha + bg * (1 - alpha) for fg, bg in zip(rgb, result)]
         return result
@@ -78,11 +80,39 @@ def displayed_color(doc, spec, images):
     raise ValueError('use actual solid-layer paths or verified screenshot coordinates')
 
 
-def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None):
+def contrast_policy(spec, expected_policy, expected_context):
+    policy = spec.get('policy', 'source-baseline')
+    if policy != expected_policy or policy not in {'source-baseline', 'contextual'}:
+        raise ValueError('contrast policy differs from frozen relationships')
+    context = spec.get('decisionContext')
+    if context != expected_context:
+        raise ValueError('contrast decision context differs from frozen relationships')
+    if context is None:
+        if policy == 'contextual':
+            raise ValueError('contextual contrast requires mode/style decision context')
+        return policy
+    if (not isinstance(context, dict) or
+            context.get('sourceUiMode') not in {'light', 'dark'} or
+            context.get('targetUiMode') not in {'light', 'dark'} or
+            context.get('adaptationMode') not in {'color-only', 'style-adaptation'}):
+        raise ValueError('invalid contrast mode/style decision context')
+    contextual = (context['sourceUiMode'] != context['targetUiMode'] or
+                  context['adaptationMode'] == 'style-adaptation')
+    if policy != ('contextual' if contextual else 'source-baseline'):
+        raise ValueError('contrast policy does not match mode/style transition')
+    if policy == 'contextual' and (not isinstance(context.get('reason'), str) or
+                                    not context['reason'].strip()):
+        raise ValueError('contextual contrast needs an actual host/role decision reason')
+    return policy
+
+
+def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
+                     expected_policy='source-baseline', expected_context=None):
     if spec.get('schemaVersion') != 1:
         raise ValueError('contrast schemaVersion must be 1')
     if spec.get('sourceHash') != digest(source) or spec.get('actualHash') != digest(actual):
         raise ValueError('contrast evidence does not match the actual snapshots')
+    policy = contrast_policy(spec, expected_policy, expected_context)
     pairs = spec.get('pairs')
     if not isinstance(pairs, list) or not pairs or not expected_pairs:
         raise ValueError('frozen contrast relationships and actual samples required')
@@ -95,6 +125,10 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None)
     images = {}; results = []
     for pair in pairs:
         frozen = expected[pair['id']]
+        minimum = frozen.get('minimumContrast')
+        if minimum is not None and (type(minimum) not in (int, float) or
+                not math.isfinite(minimum) or not 1 <= minimum <= 21):
+            raise ValueError('frozen minimumContrast must be a finite ratio in [1,21]')
         if pair['kind'] not in KINDS or pair['kind'] != frozen['kind']:
             raise ValueError('contrast relationship kind changed')
         if (not pair.get('nodeIds') or set(pair['nodeIds']) != set(frozen['nodeIds']) or
@@ -114,9 +148,14 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None)
                 colors[key] = {side: displayed_color(doc, sample[key][side], images)
                                for side in ('foreground', 'background')}
                 ratios[key] = contrast(colors[key]['foreground'], colors[key]['background'])
+            regressed = ratios['actual'] + 1e-9 < ratios['source']
+            failed = ((policy == 'source-baseline' and regressed) or
+                      (minimum is not None and ratios['actual'] + 1e-9 < minimum))
             results.append({'pairId': pair['id'], 'sampleId': sample['id'], 'kind': pair['kind'],
                             'nodeIds': pair['nodeIds'], 'colors': colors, 'ratios': ratios,
-                            'status': 'pass' if ratios['actual'] + 1e-9 >= ratios['source'] else 'fail'})
+                            'regressedFromSource': regressed, 'minimumContrast': minimum,
+                            'status': 'fail' if failed else
+                                      ('measured' if policy == 'contextual' and minimum is None else 'pass')})
     orders = spec.get('emphasisOrders', [])
     expected_orders = expected_orders or []
     if orders != expected_orders:
@@ -137,10 +176,13 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None)
             raise ValueError('declared stronger member is not stronger in source')
         order_results.append({'id': order['id'], 'sourceStrengthRatio': baseline,
                               'actualStrengthRatio': current,
-                              'status': 'pass' if current > 1 and current + 1e-9 >= baseline else 'fail'})
-    return {'status': 'pass' if all(r['status'] == 'pass' for r in results + order_results) else 'fail',
+                              'status': 'pass' if current > 1 and
+                              (policy == 'contextual' or current + 1e-9 >= baseline) else 'fail'})
+    return {'status': 'pass' if all(r['status'] != 'fail' for r in results + order_results) else 'fail',
+            'policy': policy, 'decisionContext': expected_context,
             'pairCount': len(pairs), 'samples': results, 'emphasisOrders': order_results,
-            'note': 'Each declared relationship must not regress; visual discernibility is checked separately.'}
+            'note': ('Same-mode color reskins must not regress; contextual reskins retain measurements '
+                     'and enforce declared minima/orders. Numeric completion never grants visual PASS.')}
 
 
 def main():
@@ -155,7 +197,9 @@ def main():
         frozen = read_json(args.relationships)
         result = compare_contrast(source, actual, read_json(args.spec),
                                   frozen['pairs'] if isinstance(frozen, dict) else frozen,
-                                  frozen.get('emphasisOrders', []) if isinstance(frozen, dict) else [])
+                                  frozen.get('emphasisOrders', []) if isinstance(frozen, dict) else [],
+                                  frozen.get('policy', 'source-baseline') if isinstance(frozen, dict) else 'source-baseline',
+                                  frozen.get('decisionContext') if isinstance(frozen, dict) else None)
         save_json(args.out, result)
         print(result['status']); return 0 if result['status'] == 'pass' else 1
     except (ValueError, KeyError, TypeError, OSError) as exc:
