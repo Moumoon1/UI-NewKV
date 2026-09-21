@@ -26,3 +26,16 @@ test('vector region colors use async API and keep topology',async()=>{
 test('mixed text ranges use range fill API without typography calls',async()=>{
  const before=[{type:'SOLID',color:{r:.1,g:.2,b:.3}}];const after=[{type:'SOLID',color:{r:.7,g:.2,b:.3}}];let count=0;const n={id:'a',type:'TEXT',fontName:'unchanged',getRangeFills:()=>before,setRangeFills:(start,end,value)=>{assert.equal(start,2);assert.equal(end,5);assert.equal(JSON.stringify(value),JSON.stringify(after));count++;}};await ctx.applyDeclaredColorDiff(api(n),[{cloneId:'a',property:'textRuns',runs:[{start:2,end:5,value:after,beforeHash:hash(before)}]}]);assert.equal(count,1);assert.equal(n.fontName,'unchanged');
 });
+test('local variable alias removal deletes the property rather than storing a sentinel',async()=>{
+ const n={id:'a',fills:[{type:'SOLID',color:{r:.1,g:.2,b:.3},boundVariables:{color:{type:'VARIABLE_ALIAS',id:'v'}}}]};
+ const after=structuredClone(n.fills);delete after[0].boundVariables.color;after[0].color.r=.7;
+ await ctx.applyDeclaredColorDiff(api(n),[op(n,'fills',after,[{path:'/0/boundVariables/color',value:{$missing:true}},{path:'/0/color/r',value:.7}])]);
+ assert.equal('color' in n.fills[0].boundVariables,false);assert.equal(n.fills[0].color.r,.7);
+});
+test('mixed text recovery skips completed ranges and rejects conflicts before writes',async()=>{
+ const before=[{type:'SOLID',color:{r:.1,g:.2,b:.3}}];const after=[{type:'SOLID',color:{r:.7,g:.2,b:.3}}];let calls=0;
+ const n={id:'a',getRangeFills:()=>after,setRangeFills:()=>{calls++;}};
+ const plan={cloneId:'a',property:'textRuns',runs:[{start:0,end:2,value:after,beforeHash:hash(before)}]};
+ const result=await ctx.applyDeclaredColorDiff(api(n),[plan]);assert.equal(calls,0);assert.equal(result.mutatedNodeIds.length,0);
+ n.getRangeFills=()=>[{type:'SOLID',color:{r:.5,g:.2,b:.3}}];await assert.rejects(ctx.applyDeclaredColorDiff(api(n),[plan]),/before conflict/);assert.equal(calls,0);
+});

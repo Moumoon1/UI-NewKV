@@ -146,6 +146,27 @@ class ColorRelationChecks(unittest.TestCase):
         self.before["nodes"][1]["props"]["fills"][0]["color"]["g"] = .8
         self.assertEqual(audit.color_relations(self.before, self.after, self.spec)["status"], "fail")
 
+    def test_derived_family_catches_gold_cta_against_brown_small_button(self):
+        group = self.spec['groups'][0]
+        group.update(relationType='hue-family', basis='User requires CTA and local buttons in one family',
+                     maximumHueDistanceDegrees=6)
+        self.after['nodes'][1]['props']['fills'][0]['color'] = {'r': 135/255, 'g': 88/255, 'b': 45/255}
+        self.after['nodes'][2]['props']['fills'][0]['color'] = {'r': 201/255, 'g': 149/255, 'b': 74/255}
+        self.assertEqual(audit.color_relations(self.before, self.after, self.spec)['status'], 'fail')
+        self.after['nodes'][2]['props']['fills'][0]['color'] = {'r': 166/255, 'g': 118/255, 'b': 72/255}
+        self.assertEqual(audit.color_relations(self.before, self.after, self.spec)['status'], 'pass')
+        self.after['nodes'][2]['props']['fills'][0]['color'] = {'r': .5, 'g': .5, 'b': .5}
+        self.assertEqual(audit.color_relations(self.before, self.after, self.spec)['status'], 'fail')
+
+    def test_target_shared_relation_requires_basis_and_equal_targets(self):
+        group = self.spec['groups'][0]; group['relationType'] = 'target-shared'
+        with self.assertRaises(ValueError): audit.color_relations(self.before, self.after, self.spec)
+        group['basis'] = 'Shared recipe slots derived before writes'
+        self.before['nodes'][1]['props']['fills'][0]['color']['r'] = .2
+        self.assertEqual(audit.color_relations(self.before, self.after, self.spec)['status'], 'pass')
+        self.after['nodes'][1]['props']['fills'][0]['color']['r'] = .8
+        self.assertEqual(audit.color_relations(self.before, self.after, self.spec)['status'], 'fail')
+
     def test_empty_missing_partial_color_and_duplicate_member_rejected(self):
         for paths in (["/nodes/missing/props/fills/0/color", self.spec["groups"][0]["paths"][0]],
                       ["/nodes/card/props/fills/0/color/r", "/nodes/button/props/fills/0/color/r"],

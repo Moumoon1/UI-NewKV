@@ -84,6 +84,84 @@ class ContrastChecks(unittest.TestCase):
     def test_known_black_white_ratio(self):
         self.assertEqual(contrast.contrast([0, 0, 0], [1, 1, 1]), 21)
 
+    def contextual_check(self, source_mode='dark', target_mode='light', style='color-only'):
+        context = {'sourceUiMode': source_mode, 'targetUiMode': target_mode,
+                   'adaptationMode': style, 'reason': 'Pale KV host; preserve clear states and material.'}
+        self.spec.update(policy='contextual', decisionContext=context,
+                         actualHash=digest(self.actual))
+        return contrast.compare_contrast(self.source, self.actual, self.spec, self.frozen,
+                                         self.spec.get('emphasisOrders', []),
+                                         expected_policy='contextual', expected_context=context)
+
+    def test_cross_mode_lower_ratio_is_measured_without_numeric_failure(self):
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .9, 'g': .95, 'b': 1}
+        result = self.contextual_check()
+        self.assertEqual(result['status'], 'pass')
+        self.assertEqual(result['samples'][0]['status'], 'measured')
+        self.assertTrue(result['samples'][0]['regressedFromSource'])
+        self.assertIn('never grants visual PASS', result['note'])
+
+    def test_same_mode_color_only_cannot_use_contextual_policy(self):
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            self.contextual_check('light', 'light')
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            self.contextual_check('dark', 'dark')
+
+    def test_style_adaptation_can_use_contextual_even_in_same_mode(self):
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .9, 'g': .95, 'b': 1}
+        self.assertEqual(self.contextual_check('light', 'light', 'style-adaptation')['status'], 'pass')
+
+    def test_contextual_still_enforces_frozen_explicit_minimum(self):
+        self.frozen[0]['minimumContrast'] = 2
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .99, 'g': .99, 'b': 1}
+        self.assertEqual(self.contextual_check()['status'], 'fail')
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': 0, 'g': 0, 'b': 0}
+        self.assertEqual(self.contextual_check()['status'], 'pass')
+
+    def test_sample_cannot_downgrade_frozen_policy_or_change_context(self):
+        self.spec['policy'] = 'contextual'
+        with self.assertRaisesRegex(ValueError, 'differs from frozen'):
+            self.run_check()
+        context = {'sourceUiMode': 'dark', 'targetUiMode': 'light',
+                   'adaptationMode': 'color-only', 'reason': 'Pale KV'}
+        self.spec['decisionContext'] = context
+        with self.assertRaisesRegex(ValueError, 'context differs'):
+            contrast.compare_contrast(self.source, self.actual, self.spec, self.frozen,
+                                     expected_policy='contextual', expected_context={**context, 'targetUiMode': 'dark'})
+
+    def test_contextual_order_may_change_strength_but_cannot_invert_priority(self):
+        self.source['nodes']['weak'] = copy.deepcopy(self.source['nodes']['plate'])
+        self.source['nodes']['weak']['props']['fills'][0]['color'] = {'r': .7, 'g': .8, 'b': .9}
+        self.actual = copy.deepcopy(self.source)
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .6, 'g': .65, 'b': .7}
+        self.spec['sourceHash'] = digest(self.source)
+        weak = copy.deepcopy(self.spec['pairs'][0]); weak['id'] = 'weak-host'; weak['nodeIds'] = ['weak', 'host']
+        for key in ('source', 'actual'):
+            layer = weak['samples'][0][key]['foreground']['layers'][1]
+            layer['colorPath'] = layer['colorPath'].replace('plate', 'weak')
+            layer['alphaPaths'] = [p.replace('plate', 'weak') for p in layer['alphaPaths']]
+        self.spec['pairs'].append(weak)
+        self.frozen.append({k:weak[k] for k in ('id', 'kind', 'nodeIds', 'sampleIds')})
+        self.spec['emphasisOrders'] = [{'id': 'selected', 'strongerPairId': 'plate-host',
+                                      'weakerPairId': 'weak-host', 'sampleId': 'center'}]
+        self.assertEqual(self.contextual_check()['status'], 'pass')
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .9, 'g': .95, 'b': 1}
+        self.assertEqual(self.contextual_check()['status'], 'fail')
+
+    def test_translucent_foreground_on_verified_image_host(self):
+        from PIL import Image
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp) / 'host.png'
+            Image.new('RGB', (1, 1), (51, 102, 153)).save(p)
+            host = {'image': {'path': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}, 'xy': [0, 0]}
+            spec = {'host': host, 'layers': [{'colorPath': '/nodes/plate/props/fills/0/color',
+                                            'alphaPaths': ['/nodes/plate/props/opacity']}]}
+            actual = contrast.displayed_color(self.source, spec, {})
+            for x, y in zip(actual, [.3, .45, .6]): self.assertAlmostEqual(x, y)
+            spec['host']['image']['sha256'] = 'stale'
+            with self.assertRaises(ValueError): contrast.displayed_color(self.source, spec, {})
+
     def test_non_normal_or_hidden_paint_cannot_impersonate_solid_background(self):
         self.actual['nodes']['plate']['props']['fills'][0]['blendMode'] = 'MULTIPLY'
         with self.assertRaises(ValueError): self.run_check()

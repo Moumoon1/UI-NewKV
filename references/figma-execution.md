@@ -36,6 +36,7 @@ KV 衔接信息带
 一级/二级 Tab、状态和实现方式
 视频封面 protected-media-overlay 精确节点清单
 排行榜前三名 protected-rank-top3 的名次文字、形状及原色指纹清单
+独立营销 Banner protected-marketing-banner 的完整子树与原始外观指纹清单
 全部换肤相关实例和主组件信息
 语义组件到 visualSurfaceCarrier 的映射
 sourceSalienceMap 与 sourceLuminanceTopology
@@ -53,6 +54,8 @@ sourceSalienceMap 与 sourceLuminanceTopology
 - `unknown-image`：证据不足，保持不变并继续核实实际贡献/语义；若明显旧色阻碍结果，先核查分类及允许的调整路径，只有仍无法安全处理时报告具体素材阻塞，不在第一次分类不明时停止全任务。
 
 `theme-decoration-raster` 可以保持图片哈希、几何、变换和节点整体 Alpha，只调整 Paint 滤镜和 Paint Alpha。同模式不得归零；跨模式只有滤镜无法协调且不承载内容/业务含义时，才可把该 IMAGE Paint Alpha 降为 0 并记录。
+
+IMAGE 位于 `protected-marketing-banner` 子树时，优先服从该保护分类，不能因同时含有主题插画、文字或装饰而改归 `theme-decoration-raster`。
 
 ## 3. 找到真实视觉承载层
 
@@ -93,6 +96,14 @@ surface-stroke / state-indicator / decoration
 
 若为处理保护范围之外的内容而解绑祖先，解绑后必须重建保护映射并逐项比对。不得为前三名名次/形状重新配色而解绑实例；也不得通过祖先整体 Alpha、滤镜、混合模式或额外覆盖层间接改变这些保护对象。合法外卡片背景变化引起的透明边缘合成差异不等于保护 Paint 被改动，不能因此重着色补偿。
 
+### 3.2 独立营销 Banner 创意内容保护
+
+页面中不承担通用卡片、列表、任务或奖励结构，只作为独立营销传播位存在的 Banner，把其定制插画/图片背景、活动文案与促销构图登记为 `protected-marketing-banner` 并保持原样。典型证据是横向或独立比例的完整视觉单元，内部颜色与素材共同组成已经完成的营销创意；不能只凭节点名称含 `banner` 判定，也不能把普通业务卡片误保护。
+
+保护范围按语义子树/通道精确登记：创意背景、插画、图片和营销文案的 Fill、Stroke、渐变、文字颜色、图片参数、Effect、Alpha、blendMode、几何与层级均与原稿一致，不因含旧主题色而进入残留清理。Banner 内或紧邻 Banner、可单独识别且可编辑的 CTA、按钮与通用操作控件必须从保护集合中剔除，继续进入对应按钮家族换肤；不能因它们嵌套在同一个实例或视觉上属于促销构图就漏改。只有操作画面已烘焙进不可编辑单图，或用户明确要求整个 Banner 连同控件保持原样时，才允许整体保护。不得通过保护祖先的滤镜、透明度或覆盖层间接改变已保护创意，也不得用祖先保护跳过未保护 CTA。
+
+在 `sourceAudit.protectedMarketingBanners` 保存根节点、实际受保护后代/通道、显式排除的 CTA/控件、截图证据、营销语义证据与外观指纹；受保护集合映射到 `mutationPlan.protectedMarketingBannerIds` 并从写色/残留目标中排除，CTA/控件则映射到各自交互家族。Phase 7 分别对保护集合做零差异比较、对排除控件做目标配方比较。无法区分营销创意与普通卡片/控件时继续读取同类实例、内容和宿主关系，证据仍不足才把该区域列为写入阻塞，不能猜测换色。
+
 ## 4. 结构与 Paint 快照
 
 以子节点索引路径记录原稿：
@@ -121,6 +132,12 @@ itemReverseZIndex、实际绘制顺序、蒙版类型及同组作用范围
 
 默认遵循用户的 KV 尺度要求：先按新 KV 在 Figma 中的原设计尺寸直接使用；需要匹配页面宽度时按同宽等比显示，不能为容纳较长尾部而整体缩小。高度超出原 Hero 时，允许截去下方超高部分，Hero 外框与下方 UI 起点不变。源像素尺寸与设计尺寸分别记录，高分辨率资源不按像素数当设计尺寸。禁止拉伸、AI 重画/扩图、重排图中文字或混入旧主题。只有用户明确要求整张完整显示时才采用下文 contain 分支；不可把旧的完整显示默认值盖过当前尺度要求。
 
+适配前先确定 `sourceVisualUnitType=single-image|composite-kv`。用户指定的新 KV 若是 Frame、Group、Component 或其他由多个 IMAGE、Vector、文字、遮罩、纯色/渐变层共同构成的完整主视觉，整棵指定节点就是原子级 `composite-kv`；不能因为其中某个 IMAGE 看起来最像主图，就只抽取该内层图片替换。记录整组原设计宽高、子节点相对几何、裁切链、每层 Paint 与渐变变换、可见下缘过渡及截图指纹。
+
+`composite-kv` 在页面同宽且原设计宽度已匹配时默认 `scale=1`、顶部对齐；Hero 较矮时由 Hero 可见窗口裁去整组下方超出部分，不能把整组 resize 到 Hero 高度。需要同宽时只做一次统一等比缩放，内部各层共享同一变换；不得单独缩放某个子层、重算内部渐变或改变文字/主体相对位置。若 Figma 结构限制导致整组无法可靠克隆/重挂，可把完整复合节点按原设计尺度导出为单张图并作为 `kv-main-image` 放入；这是保真兜底，不能退化为导出或复用某个内层 IMAGE，源 KV 节点本身不修改。
+
+新 KV 已含底部纯色或渐变衔接时，它属于复合主视觉的一部分，必须精确保留渐变类型、`gradientTransform`、色标数量/位置/Alpha、方向与最终下缘颜色。若其终点被选作页面延伸色，页面从该实际终点继续；不得翻转、重建或叠加旧接缝渐变。旧 KV 的衔接层已被新 KV 覆盖时按 `kv-asset-subtree` 抑制；确需复用并重着色时只改已登记的色标颜色/Alpha，保持原 `gradientTransform` 和位置，禁止写入默认恒等 transform。任何渐变方向或色标位置变化都必须来自用户明确要求或独立的结构修复计划，普通换肤/KV 适配不授权。
+
 ### 5.1 先确认实际可见安全窗口
 
 区分三个对象：受保护的 `heroFrame`（页面中的 Hero 外框）、旧图 `imageCarrier`（可能负偏移、超大或嵌在蒙版内）、最终用于主图显示的 `heroVisibleWindow`。**不能只把旧负偏移图片节点改为 `FIT`，也不能直接把旧图节点尺寸当作 Hero 可见尺寸。**
@@ -132,7 +149,7 @@ itemReverseZIndex、实际绘制顺序、蒙版类型及同组作用范围
 
 ### 5.2 分开计算保留尺度与完整显示
 
-使用解码后方向正确的原图尺寸 `Iw × Ih`，安全窗口 `x,y,W,H`；尺寸必须为有限正值。默认 `fitMode=preserve-scale-bottom-crop`：有源设计尺寸时优先使用原设计尺度；需要同宽时采用 `s=W/Iw`，不使用高度限制缩放。顶端对齐，居中或按原合理 x 放置，记录超出 Hero 下方的实际高度；图片载体保留完整等比尺寸，由既有 Hero 边界裁切，不把载体 resize 成不同宽高比。关键内容若意外被切，先检查载体、祖先和最小定位修正，不自动退回 contain。
+使用解码后方向正确的原图尺寸或完整 `composite-kv` 原设计边界 `Iw × Ih`，安全窗口 `x,y,W,H`；尺寸必须为有限正值。默认 `fitMode=preserve-scale-bottom-crop`：有源设计尺寸时优先使用原设计尺度；需要同宽时采用 `s=W/Iw`，不使用高度限制缩放。顶端对齐，居中或按原合理 x 放置，记录超出 Hero 下方的实际高度；单图载体或复合视觉单元保留完整等比尺寸，由既有 Hero 边界裁切，不把载体 resize 成不同宽高比。关键内容若意外被切，先检查载体、祖先和最小定位修正，不自动退回 contain。
 
 仅用户明确要求整图完整显示时令 `fitMode=contain`，在 Hero 局部坐标计算：
 
@@ -152,6 +169,8 @@ contain 分支默认居中；为固定功能控件或接缝做顶部/底部对�
 
 若 KV 位于实例内而本地覆盖不支持必要的几何/增层操作，可按第 9 节先解绑对应副本实例并验证解绑前后视觉一致，再执行下列适配；原稿实例和主组件不变。
 
+若 `sourceVisualUnitType=composite-kv`，优先把完整根节点作为一个单元 clone/reparent 到副本 Hero 的 KV 层，并只对根做统一等比尺度与定位；内部节点不进入普通 KV 适配写入白名单。结构或跨文件限制导致无法可靠保留整组时，先导出完整根节点，再按第 3 项的单一 `kv-main-image` 路径放置；必须保存完整导出与源截图比对证据。以下针对 IMAGE Paint 的路径不得被用来只替换复合 KV 的某个内层图。
+
 1. 若现有载体及其祖先已覆盖安全窗口，优先在指定 IMAGE Paint 上重设适配模式/变换，让主图按当前 fitMode 落入计算边界；保留无关 Paint、混合模式和效果。
 2. 若现有载体仅属于 KV，可调整其 `x/y/width/height` 以匹配计算边界。不得更改作为 Hero 外框或参与页面布局的载体尺寸，不得移动同节点承载的功能 UI。
 3. 若旧载体负偏移、含混合内容或内层蒙版使以上操作不可靠，允许在 Hero 内合适的既有祖先下新增**最多一个**独立 `kv-main-image` Rectangle。它使用原始新图 IMAGE Paint、正常不透明显示和等比计算尺寸；在 Auto Layout 下设绝对定位，不参与尺寸计算。放在功能 UI 后方，并避免继承旧 KV 专属裁切。原 KV 的指定 Paint 可将 Alpha 设为 0；不删除旧节点，不关闭含功能内容的祖先。新增载体不是新增页面模块。
@@ -161,12 +180,17 @@ contain 分支默认居中；为固定功能控件或接缝做顶部/底部对�
 
 ### 5.4 旧资产与执行记录
 
-旧 Hero 若由背景图片加标题/Logo/主体图形叠层组成，而新 KV 已烘焙对应内容，可把有父级路径、截图和语义证据的 `kv-asset-subtree` 节点整体 Alpha 设为 0，保留 `visible=true` 和 Auto Layout 占位。只隐藏被替代的 KV 资产，不隐藏整个 Hero 或混合内容祖先。倒计时、周期、规则、状态、返回、分享和导航属于 `hero-adjacent-ui`，必须保留。其中叠在 KV 上的返回、规则、钱包、客服、分享及同类导航/功能入口，精确标记为 `protected-hero-controls`：图标、文字、底托、描边、渐变、透明度、效果、素材及现有状态均保持原 UI，不参与换色、画风迁移或旧色清理。不得通过祖先透明度或覆盖层间接改样式。倒计时、周期及 Hero 外信息带不因同属 `hero-adjacent-ui` 自动豁免，仍按其独立角色处理。保护控件在新背景上的可读性如实记录，不能为了达标擅自改色。
+旧 Hero 若由背景图片加标题/Logo/主体图形叠层组成，而新 KV 已烘焙对应内容，可把有父级路径、截图和语义证据的 `kv-asset-subtree` 节点整体 Alpha 设为 0，保留 `visible=true` 和 Auto Layout 占位。只隐藏被替代的 KV 资产，不隐藏整个 Hero 或混合内容祖先。倒计时、周期、规则、状态、返回、分享和导航属于 `hero-adjacent-ui`，必须保留。其中叠在 KV 上的返回、规则、钱包、客服、分享及同类导航/功能入口，精确标记为 `protected-hero-controls`。同模式全部样式仍按原 UI 精确保留，不参与画风迁移或旧色清理。浅→深或深→浅时允许适配前景，遵守下述唯一规则；不通过祖先透明度、覆盖层或移动入口间接适配。倒计时、周期及 Hero 外信息带不自动豁免，仍按独立角色处理。
+
+**跨模式入口配色例外。** 仅 `light-to-dark` / `dark-to-light` 生效，在副本中优先调整精确入口文字及对应功能图形的 Fill/Stroke RGB，使其适合真实新 KV 背景；不套普通文字弱化阶梯，不改变现有状态。原稿以及入口几何、字体、文案、素材、渐变空间结构、混合模式、节点/祖先 Alpha、效果有效开关保持。已有底托默认保留；仅当前景调整仍不能满足真实可辨性或用户明确指定的对比度标准时，允许最小联动其颜色与 Paint opacity，必须用原/新宿主、前景候选及失败证据说明必要性，不能新增底板或影响 KV 构图。将精确节点、属性前后值、模式、原因和原稿基线写入 `mutationPlan.heroControlAdaptations`，纳入试色、覆盖、结构白名单及最终入口审计。已登记适配通道校验目标配方，其余通道精确保留；同模式和媒体/前三名保护项不引用此例外。跨模式前景与实际宿主按《验收规则》第 5.1 节的 contextual 策略验收，原稿比值保留作参考；真实可读性、状态层级与用户明确标准仍是门禁，不为追赶旧比值把既有底托强行加深或拉满 opacity。
 
 在 `mutationPlan.kvFitPlan` 记录：
 
 ```text
-sourceImage: 宽高、方向、文件/imageHash、解码与源清晰度证据
+sourceVisualUnit: single-image / composite-kv、完整根节点、原设计宽高与截图指纹
+sourceImage: 单图时的宽高、方向、文件/imageHash、解码与源清晰度证据；复合 KV 时为全部成员和完整导出兜底证据
+compositeSnapshot: 子节点顺序、相对几何、裁切/蒙版、Paint、渐变类型/gradientTransform/色标位置/Alpha、文字与素材指纹
+bottomTransition: none / embedded-in-new-kv / reused-old-layer、实际终点、方向所有权及保持证据
 heroFrame: ID、原始外框、下方 UI 边界
 clipChain: 主图所经祖先 ID、变换、裁切/蒙版形状与求交证据
 heroVisibleWindow: Hero 局部坐标 x/y/W/H、内接/避让依据
@@ -179,7 +203,7 @@ backdrop: none 或节点/Fill、环境取色证据、配方与边界
 allowedMutations: 逐节点 ID/路径、Paint 索引、允许属性及前后值
 hiddenKvAssets / suppressedOldKvPaints / protectedHeroUiIds
 sourceToCloneNodeMap: 既有节点对应关系与新增节点清单
-renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、关键标题/Logo/主体核对、UI 未位移；contain 另核对完整四边
+renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 KV 内部几何/渐变方向未变、接缝连续、关键标题/Logo/主体核对、UI 未位移；contain 另核对完整四边
 ```
 
 先完成可见窗口与适配白名单，再写入；截图若有非计划裁切、尺度变化或旧图透出，在同一副本重算窗口、载体或补底并复验。仅真实的文件/权限/唯一目标问题，或无法在受保护 Hero 内形成任何有效窗口时，才说明具体阻塞。
@@ -250,12 +274,13 @@ GRADIENT Paint: gradientStops[].color/alpha（保持结构有效开关）
 已有带颜色 Effect: color
 已登记按钮材质 Fill/Stroke: SOLID/GRADIENT Paint opacity（仅 buttonMaterialAlphaOverrides）
 已登记 card.atmosphere Fill: SOLID/GRADIENT Paint opacity（仅 atmosphereMutations）
+已登记禁用按钮视觉单元根: node opacity（仅 disabledButtonOpacityOverrides；相对正常态有效倍率 50%）
 已登记普通 TEXT: 自身 opacity（仅 textNodeAlphaOverrides，见《文字换色与恢复》）
 ```
 
-必须复制 Paint/Effect 数组后赋值，保留结构层 Alpha、顺序、渐变几何和阴影几何；节点整体 Alpha 除已登记的普通 TEXT 自身例外与 KV 资产隐藏外不变。只有《颜色决策规则》定义的跨模式氛围、浅色→深色描边和收益卡 Fill 例外可改变相应结构。
+必须复制 Paint/Effect 数组后赋值，保留结构层 Alpha、顺序、渐变几何和阴影几何；节点整体 Alpha 除已登记的普通 TEXT 自身例外、KV 资产隐藏和禁用按钮视觉单元根 50% 例外外不变。只有《颜色决策规则》定义的跨模式氛围、浅色→深色描边和收益卡 Fill 例外可改变相应结构。
 
-按钮与氛围的已登记材质 Alpha 覆盖只调整合成强度，不构成结构重做；遵守《颜色决策规则》第 5、8.1 节，保持原零/非零开关，不改变基底不透明性、保护区、节点/祖先 Alpha、蒙版或其他表面配方。Effect 只可改已有颜色 RGBA，不改变半径/偏移/类型/开关。氛围 IMAGE 必须另按既有分类和滤镜/Paint Alpha 边界处理。
+按钮与氛围的已登记材质 Alpha 覆盖只调整合成强度，不构成结构重做；遵守《颜色决策规则》第 5、8.1 节。`dark-to-light` 中仅被判为 `remove-visually` 的纯装饰 `card.atmosphere` Paint 可把既有 Paint/色标 Alpha 降到 0；稳定底色、结构表面、功能边界及非氛围材质继续保持原零/非零开关。禁用按钮只允许在最小完整视觉单元根应用相对正常态 50% 的有效 opacity，并在写入前排除已有等效衰减，其他节点/祖先 Alpha 不变。Effect 只可改已有颜色 RGBA，不改变半径/偏移/类型/开关。氛围 IMAGE 必须另按既有分类和滤镜/Paint Alpha 边界处理。
 
 多层 Paint 按职责逐层写入，禁止把同一渐变复制到同一节点多个 Fill。文字写入、普通 TEXT Alpha 例外与字体故障按[《文字换色与恢复》](text-color-recovery.md)执行，纯颜色写入不先加载字体。媒体和前三名颜色保护区的精确节点/通道完全跳过，写入后与原稿比对；误改只按原稿恢复。
 

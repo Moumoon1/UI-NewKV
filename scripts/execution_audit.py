@@ -9,28 +9,32 @@ import sys
 from theme_audit import (MISSING, at, canonical, compare, digest, equal, escape,
                          check_gate, color_relations, mapped_document, overlaps, parts, policy_check, scene_state,
                          read_json, save_json, snapshot_document, target_equal)
-from contrast_audit import compare_contrast
+from contrast_audit import compare_contrast, displayed_color, luminance
 
 
 def color_inventory(snapshot):
     doc = snapshot_document(snapshot)
     entries = []
 
-    def scan(value, path, node_id, inactive):
+    def scan(value, path, node_id, inactive, gradient=False):
         if isinstance(value, dict):
             if all(k in value for k in ('r', 'g', 'b')):
                 if not all(type(value[k]) in (int, float) and math.isfinite(value[k])
                            and 0 <= value[k] <= 1 for k in ('r', 'g', 'b')):
                     raise ValueError('invalid RGB: ' + path)
                 entries.append({'path': path, 'nodeId': node_id, 'source': value,
-                                'inactive': inactive or value.get('a') == 0})
+                                'inactive': inactive or (value.get('a') == 0 and not gradient)})
                 return
             hidden = inactive or value.get('visible') is False or value.get('opacity') == 0
+            if str(value.get('type', '')).startswith('GRADIENT_'):
+                gradient = True
+                stops = value.get('gradientStops', [])
+                hidden = hidden or bool(stops) and all(s.get('color', {}).get('a', 1) == 0 for s in stops)
             for key, child in value.items():
-                scan(child, path + '/' + escape(key), node_id, hidden)
+                scan(child, path + '/' + escape(key), node_id, hidden, gradient)
         elif isinstance(value, list):
             for i, child in enumerate(value):
-                scan(child, path + '/' + str(i), node_id, inactive)
+                scan(child, path + '/' + str(i), node_id, inactive, gradient)
 
     def visit(node_id, inactive=False):
         row = doc['nodes'][node_id]
@@ -285,6 +289,209 @@ def affected_units(source, manifest, registry, relations, frozen, changes):
             'note': 'Invalidates affected gates; includes read-only/protected members, never grants writes.'}
 
 
+def perceptual_lab(rgb):
+    """sRGB / D65 CIELAB; L* measures perceived lightness, not HSV V."""
+    linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
+    xyz = [sum(v * w for v, w in zip(linear, row)) / white
+           for row, white in [((.4124564, .3575761, .1804375), .95047),
+                              ((.2126729, .7151522, .0721750), 1.),
+                              ((.0193339, .1191920, .9503041), 1.08883)]]
+    def f(v):
+        return v ** (1 / 3) if v > (6 / 29) ** 3 else v / (3 * (6 / 29) ** 2) + 4 / 29
+    x, y, z = map(f, xyz)
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)]
+
+
+def appearance_spread(colors):
+    labs = [perceptual_lab(c) for c in colors]
+    return {'lightnessSpread': max(v[0] for v in labs) - min(v[0] for v in labs),
+            'colorSpreadDeltaE76': max(math.dist(a, b) for a in labs for b in labs),
+            'lightness': [v[0] for v in labs], 'luminance': [luminance(c) for c in colors]}
+
+
+def interaction_requirements(source, manifest, rules):
+    """Derive mandatory button comparison coverage from the full source inventory."""
+    doc = snapshot_document(source)
+    active = {e['path'] for e in color_inventory(source)['entries'] if not e['inactive']}
+    entries = [e for e in manifest['entries'] if e['path'] in active
+               and e['role'] in {'button.material', 'cta.base', 'cta.material'}]
+    small = {e['path'] for e in entries if e['role'] == 'button.material'}
+    cta = {e['path'] for e in entries if e['role'].startswith('cta.')}
+    if not small or not cta:
+        return {'status': 'pass', 'applicable': False, 'errors': []}
+    errors = []
+    contract = manifest.get('schemeAnchorContract', {})
+    button_anchor = contract.get('button') if isinstance(contract, dict) else None
+    if (not isinstance(button_anchor, dict) or set(button_anchor) not in
+            ({'r', 'g', 'b'}, {'r', 'g', 'b', 'a'}) or
+            not all(type(button_anchor[k]) in (int, float) and math.isfinite(button_anchor[k])
+                    and 0 <= button_anchor[k] <= 1 for k in ('r', 'g', 'b'))):
+        errors.append({'error': 'schemeAnchorContract.button RGB required for main button family'})
+    anchor_entries = [e for e in entries if e.get('anchorId') == 'button']
+    small_anchors = [e for e in anchor_entries if e['role'] == 'button.material']
+    cta_anchors = [e for e in anchor_entries if e['role'].startswith('cta.')]
+    if not small_anchors or not cta_anchors:
+        errors.append({'error': 'each main small-button and CTA family needs button anchor channels'})
+    elif isinstance(button_anchor, dict):
+        for entry in anchor_entries:
+            if entry.get('disposition') != 'change' or not target_equal(entry.get('target'), button_anchor):
+                errors.append({'path': entry['path'],
+                               'error': 'button anchor target differs from schemeAnchorContract.button'})
+    family_rule = rules.get('control-family-consistency', {})
+    if family_rule.get('kind') != 'visual' or family_rule.get('applicable') is not True:
+        errors.append({'error': 'button/CTA control-family visual comparison cannot be skipped'})
+    scope = set(family_rule.get('scopeNodeIds', []))
+    def covered(path, roots):
+        node = parts(path)[1]; ancestors = {node}
+        while node in doc['nodes']:
+            node = doc['nodes'][node]['parentId']
+            ancestors.add(node)
+        return bool(roots & ancestors)
+    for e in entries:
+        if not covered(e['path'], scope):
+            errors.append({'path': e['path'], 'error': 'button/CTA omitted from control-family visual scope'})
+    rule = rules.get('button-appearance-family', {})
+    verifier = rule.get('verifier', {})
+    if (rule.get('kind') != 'machine' or not rule.get('applicable')
+            or verifier.get('type') != 'displayed-relations'):
+        errors.append({'error': 'mandatory button-appearance-family native comparison missing'})
+    else:
+        joined = set()
+        for group in verifier.get('groups', []):
+            paths = set(group.get('carrierPaths', []))
+            if group.get('relationType') == 'appearance-family' and paths & small and paths & cta:
+                group_roots = set(group.get('nodeIds', []))
+                if not group_roots or not group_roots <= doc['nodes'].keys():
+                    errors.append({'error': 'button appearance group needs existing comparison roots'})
+                else:
+                    joined.update(path for path in paths & (small | cta) if covered(path, group_roots))
+        missing = sorted((small | cta) - joined)
+        if missing:
+            errors.append({'error': 'all button/CTA material paths need a joint appearance family',
+                           'missingPaths': missing})
+    return {'status': 'fail' if errors else 'pass', 'applicable': True, 'errors': errors}
+
+
+def scheme_anchor_requirements(manifest):
+    """Fail closed when a selected six-color proposal drifts during execution.
+
+    Each public anchor needs at least one stable visible carrier in the manifest.
+    Material-only derivatives may have other colors, but the declared anchor
+    channel itself must target the exact selected RGB.
+    """
+    contract = manifest.get('schemeAnchorContract')
+    if contract is None:
+        return {'status': 'pass', 'applicable': False, 'errors': []}
+    names = ('background', 'card', 'number', 'icon', 'button', 'tab')
+    errors = []
+    if not isinstance(contract, dict) or set(contract) != set(names):
+        return {'status': 'fail', 'applicable': True,
+                'errors': [{'error': 'schemeAnchorContract must contain exactly six public anchors'}]}
+
+    def valid_rgb(value):
+        return (isinstance(value, dict) and set(value) in ({'r', 'g', 'b'}, {'r', 'g', 'b', 'a'})
+                and all(type(value[k]) in (int, float) and math.isfinite(value[k])
+                        and 0 <= value[k] <= 1 for k in ('r', 'g', 'b')))
+
+    entries = manifest.get('entries', [])
+    for name in names:
+        anchor = contract[name]
+        if not valid_rgb(anchor):
+            errors.append({'anchorId': name, 'error': 'anchor must be finite RGB(A)'})
+            continue
+        carriers = [e for e in entries if e.get('anchorId') == name]
+        if not carriers:
+            errors.append({'anchorId': name, 'error': 'stable visible anchor channel missing'})
+            continue
+        for entry in carriers:
+            if entry.get('inactive') is True:
+                errors.append({'anchorId': name, 'path': entry.get('path'),
+                               'error': 'anchor channel cannot be inactive'})
+            if entry.get('disposition') != 'change' or not target_equal(entry.get('target'), anchor):
+                errors.append({'anchorId': name, 'path': entry.get('path'),
+                               'error': 'anchor target differs from selected schemeAnchorContract'})
+    unknown = sorted({e.get('anchorId') for e in entries if e.get('anchorId') is not None} - set(names))
+    if unknown:
+        errors.append({'anchorIds': unknown, 'error': 'unknown scheme anchor IDs'})
+    return {'status': 'fail' if errors else 'pass', 'applicable': True, 'errors': errors}
+
+
+def verify_displayed_relations(source, actual, rule, evidence):
+    """Check native continuity or source-relative lightness/color family relations."""
+    if evidence.get('sourceHash') != digest(source) or evidence.get('actualHash') != digest(actual):
+        raise ValueError('displayed samples must bind the fresh corresponding snapshots')
+    groups = rule.get('verifier', {}).get('groups')
+    samples = evidence.get('groups')
+    if not isinstance(groups, list) or not groups or not isinstance(samples, list):
+        raise ValueError('frozen displayed groups and fresh samples required')
+    index = {g['id']: g for g in samples}
+    if len({g['id'] for g in groups}) != len(groups) or len(index) != len(samples) or set(index) != {g['id'] for g in groups}:
+        raise ValueError('displayed samples must cover exactly the frozen groups')
+    results, images, native_evidence = [], {}, []
+    for group in groups:
+        points, limit = group.get('xy'), group.get('maximumChannelDelta')
+        kind = group.get('relationType', 'continuity')
+        if kind not in {'continuity', 'appearance-family'} or not isinstance(points, list) or len(points) < 2:
+            raise ValueError('known displayed relation and frozen comparison points required')
+        if kind == 'continuity' and (type(limit) not in (int, float) or not 0 <= limit <= 255):
+            raise ValueError('continuity needs an explicit scene tolerance')
+        if kind == 'appearance-family':
+            if not isinstance(group.get('basis'), str) or not group['basis'].strip():
+                raise ValueError('appearance family needs predeclared source/target reasoning')
+            for key in ('additionalLightnessSpread', 'additionalColorSpreadDeltaE76'):
+                value = group.get(key)
+                if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                    raise ValueError('appearance family needs frozen finite source-relative allowances')
+        ids = group.get('nodeIds', [])
+        if not ids or not set(ids) <= source['nodes'].keys() or not set(ids) <= actual['nodes'].keys():
+            raise ValueError('continuity nodes must exist in both corresponding snapshots')
+        measured = {}
+        for side, doc in [('source', source), ('actual', actual)]:
+            values = index[group['id']].get(side)
+            if not isinstance(values, list) or len(values) != len(points) or [v.get('xy') for v in values] != points:
+                raise ValueError('continuity sampling coordinates differ from the frozen responsibilities')
+            if any(set(v) != {'image', 'xy'} for v in values):
+                raise ValueError('displayed continuity requires native screenshot pixels')
+            colors = [displayed_color(doc, v, images) for v in values]
+            for value in values:
+                image = images[(value['image']['path'], value['image']['sha256'])]
+                if list(image.size) != group.get('nativePixels'):
+                    raise ValueError('continuity requires the frozen 1:1 screenshot size')
+                if side == 'actual' and value['image'] not in native_evidence:
+                    native_evidence.append(value['image'])
+            measured[side] = {'rgb8': [[round(c * 255) for c in rgb] for rgb in colors],
+                              'maximumChannelDelta': max(abs(a[c] - b[c]) * 255 for a in colors for b in colors for c in range(3))}
+            if kind == 'appearance-family':
+                measured[side].update(appearance_spread(colors))
+        if kind == 'appearance-family':
+            limits = {'lightnessSpread': measured['source']['lightnessSpread'] + group['additionalLightnessSpread'],
+                      'colorSpreadDeltaE76': measured['source']['colorSpreadDeltaE76'] + group['additionalColorSpreadDeltaE76']}
+            passed = all(measured['actual'][key] <= value + 1e-9 for key, value in limits.items())
+            measured['limits'] = limits
+        else:
+            passed = all(v['maximumChannelDelta'] <= limit + 1e-9 for v in measured.values())
+        results.append({'id': group['id'], 'status': 'pass' if passed else 'fail', **measured})
+    return {'status': 'pass' if all(g['status'] == 'pass' for g in results) else 'fail',
+            'groups': results, 'nativeEvidence': native_evidence}
+
+
+def verify_all_displayed_relations(source, actual, rules, evidence):
+    """Partition one evidence file by frozen rules, without dropping any groups."""
+    applicable = [r for r in rules.values()
+                  if r.get('kind') == 'machine' and r.get('applicable') and
+                  r.get('verifier', {}).get('type') == 'displayed-relations']
+    declared = [g['id'] for r in applicable for g in r['verifier']['groups']]
+    samples = evidence.get('groups', [])
+    ids = [g['id'] for g in samples]
+    if (len(set(declared)) != len(declared) or len(set(ids)) != len(ids) or
+            set(ids) != set(declared)):
+        raise ValueError('displayed evidence must cover exactly all frozen rule groups')
+    return {r['id']: verify_displayed_relations(source, actual, r,
+                {**evidence, 'groups': [g for g in samples if g['id'] in
+                    {v['id'] for v in r['verifier']['groups']}]})
+            for r in applicable}
+
+
 def verify_rule(source, actual, rule):
     verifier = rule.get('verifier', {})
     kind = verifier.get('type')
@@ -388,6 +595,8 @@ def finalize(spec):
                                   {'status': 'pass', 'groupCount': 0,
                                    'notApplicableEvidence': relation_rule['emptyEvidence']})
     source_doc, actual_doc = mapped_document(source, actual, mapping)
+    machine['scheme-anchor-conformance'] = scheme_anchor_requirements(plan)
+    machine['interaction-requirements'] = interaction_requirements(source, plan, rules)
     unit_rule = rules['visual-unit-coverage'].get('verifier', {})
     if not spec.get('visualUnits') or unit_rule.get('type') != 'visual-unit-coverage':
         raise ValueError('frozen visualUnits are required for full and local runs')
@@ -401,7 +610,14 @@ def finalize(spec):
         raise ValueError('frozen contrast relationships and fresh contrastSamples required')
     machine['contrast-baseline'] = compare_contrast(
         source_doc, actual_doc, read_json(spec['contrastSamples']), contrast_rule.get('relationships'),
-        contrast_rule.get('emphasisOrders', []))
+        contrast_rule.get('emphasisOrders', []), contrast_rule.get('policy', 'source-baseline'),
+        contrast_rule.get('decisionContext'))
+    if any(r.get('kind') == 'machine' and r.get('applicable') and
+           r.get('verifier', {}).get('type') == 'displayed-relations' for r in rules.values()):
+        if not spec.get('displayedSamples'):
+            raise ValueError('fresh displayedSamples required for displayed relations')
+        machine.update(verify_all_displayed_relations(
+            source_doc, actual_doc, rules, read_json(spec['displayedSamples'])))
     for rule in rules.values():
         if rule['kind'] == 'machine' and rule['applicable'] and rule['id'] not in machine:
             machine[rule['id']] = verify_rule(source_doc, actual_doc, rule)
@@ -410,6 +626,7 @@ def finalize(spec):
     whole_page_reviewed = False
     family_rule = rules['control-family-consistency']
     family_compared = not family_rule['applicable']
+    reviewed_evidence = []
     for scene in spec.get('visualScenes', []):
         scene_spec, gate = read_json(scene['spec']), read_json(scene['gate'])
         if scene_spec.get('recipe', {}).get('ruleLedgerHash') != ledger_hash:
@@ -420,6 +637,7 @@ def finalize(spec):
         gate_results.append(result)
         if result['status'] != 'pass':
             continue
+        reviewed_evidence.extend(gate.get('evidence', []))
         context = set(state['payload']['context'])
         requirements = {r['id']: r for r in scene_spec['reviewRequirements']}
         family_requirement = requirements.get('control-family-consistency', {})
@@ -464,6 +682,10 @@ def finalize(spec):
                        'unitIds': unreviewed_units})
     if not family_compared:
         errors.append({'error': 'fresh cross-region control-family comparison required; separate local passes are insufficient'})
+    for result in machine.values():
+        for evidence in result.get('nativeEvidence', []):
+            if evidence not in reviewed_evidence:
+                errors.append({'error': 'displayed relation uses an image outside the fresh accepted visual gate', 'image': evidence['path']})
     passed = all(v['status'] == 'pass' for v in machine.values()) and all(g['status'] == 'pass' for g in gate_results)
     return {'status': 'pass' if passed and not missing and not uncovered and not errors else 'fail',
             'ruleLedgerHash': ledger_hash, 'machineChecks': machine, 'visualGates': gate_results,

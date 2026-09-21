@@ -44,7 +44,17 @@ Phase 0 读取第 3–5 节以初始化执行记录，Phase 3–6 读取第 1–
 
 ## 3. 中断恢复与证据持久化
 
-四个顶层产物不变。快照和截图可以是旁文件，用路径和哈希引用；不把大树反复嵌入日志。每次完成实际动作就原子保存本地产物，不在末尾补写历史时间。
+四个顶层产物不变。快照和截图可以是旁文件，用路径和哈希引用；不把大树反复嵌入日志。每次完成实际动作就原子保存本地产物，不在末尾补写历史时间。这里的“持久化”只指**当前未完成任务的中断恢复**，不是跨任务积累历史配色或长期归档。
+
+Phase 0 先运行：
+
+```sh
+python3 scripts/run_workspace.py init --file-key ACTUAL_FILE_KEY --target-id ACTUAL_TARGET_ID
+```
+
+把返回的绝对路径登记为 `mutationPlan.runWorkspace`。当前运行产生的下载 KV、原稿/副本快照、配色 JSON/PNG、截图、派生视图、差异、批次、门禁和最终审计旁文件全部写入此目录；Skill 根目录只保留规则与可复用脚本。不得自动枚举或读取稳定 `artifacts/`、`work-*.png`、旧 `run-*` 目录来猜测当前 KV、目标或方案。当前输入必须来自本轮用户消息与当前 Figma 文件的实时读取。
+
+只有用户明确要求恢复同一个未完成任务时，才读取既有 `runWorkspace`；恢复前同时核对标记中的 `fileKey/targetNodeId`、新 KV 身份或文件哈希、原稿快照指纹和 Figma 中唯一副本。任一不匹配即新建运行目录并重新只读分析，绝不把旧色板、旧截图或旧 PASS 带入新任务。
 
 `mutationPlan` 保存 `runId`、源/副本 ID、`sourceToCloneNodeMap`、`trialScenes`、`trialGates`、`batches` 和 `executionPhaseLog`。恢复时先核对输入、原稿快照及既有副本，再从已验证阶段继续；首次仍遵循 Phase 0–7，局部回退允许追加事件，不删除历史事件，也不重新执行 clone。
 
@@ -61,6 +71,18 @@ Phase 0 读取第 3–5 节以初始化执行记录，Phase 3–6 读取第 1–
 不得把冲突值自动改成新的 `before` 来覆盖，不盲目重复整个脚本。所有成功/失败/未知操作都保留，超时不等于失败回滚。原稿检测到外部修改时重新分析受影响依赖，不擅自将原稿恢复成旧快照。结构操作单独核查实际存在性和映射；纯属性恢复工具不负责重试 clone、detach、增删层。
 
 只对受影响场景重新取图；未变化原稿视图、快照和已审过的同一渲染可复用。全量原稿/副本结构最终仍各核对一次。任何写入后的截图不得复用写入前的文件冒充新证据。
+
+### 3.1 完成后的临时证据清理
+
+`finalAudit=pass|pass-with-warnings` 且完成回复所需摘要已提取后，默认执行：
+
+```sh
+python3 scripts/run_workspace.py cleanup ABSOLUTE_RUN_WORKSPACE
+```
+
+清理范围是该目录内的全部本次运行文件，包括下载素材副本、配色提案、快照、试色/最终截图、派生视图、节点映射、差异、批次、门禁和审计 JSON。Figma 原稿、副本和用户提供的原始文件不在清理范围。运行未完成、需要继续恢复，或用户明确要求保留审计包时不清理；取消任务且用户不需要恢复时也清理。
+
+清理脚本必须校验系统临时根、目录前缀和运行标记，只接受本 Skill 自建的精确目录。禁止 `rm -rf` 通配符、禁止扫描并批量删除旧目录、禁止删除仓库内 `artifacts/` 或任何未带有效标记的路径。清理返回值写入完成回复：`pass`、`kept-by-user` 或 `not-complete`；失败时报告精确原因并保留目录，不绕过校验。
 
 ## 4. 可复用工具
 
@@ -87,7 +109,7 @@ python3 scripts/theme_audit.py diff source-before.json clone-now.json clone-poli
 
 保护路径覆盖该属性全部后代，优先于允许差异；不能笼统允许整个节点。混合文字或 Vector 保护须精确到区间/区域并确保索引仍有效；若文字区间合并/拆分使保护路径失效，先重新按原字符范围核对和映射，不能移除保护或用宽泛例外让脚本通过。工具的差异表不自动区分业务许可，登记例外仍必须符合主 skill。
 
-颜色读回按预先声明的目标配方校验；只有第 3.2 节浅→浅保留条件或当前明确锁定的通道才与源值保持，不复用历史任务中强制保留源 S/V 的专用校验代码。属性差异通过不代表按钮、CTA 或 Icon 已在背景上突出，视觉门禁仍按《颜色决策规则》第 3.2 节执行。
+颜色读回按预先声明的目标配方校验；只有第 3.2 节浅→浅基线真实通过后所沿用的通道，或当前明确锁定的通道，才要求与源值保持，不复用历史任务中强制保留源 S/V 的专用校验代码。属性差异通过不代表按钮、CTA 或 Icon 已在背景上突出，视觉门禁仍按《颜色决策规则》第 3.2 节执行。
 
 原稿/保护属性和差异发现使用精确值；仅已登记的目标数值允许绝对 `1e-6` 的浮点读回误差，避免把 Figma 的 0.699999988 与计划 0.7 误判成部分失败。`diff=pass` 表示没有越界差异，不证明所有计划已经执行；完成检查还须逐批确认待写和冲突均为空。
 
@@ -110,7 +132,9 @@ python3 scripts/theme_audit.py check-gate scene-current.json gate.json --out gat
 
 `scene-spec.json` 含 `sceneId/dependencyNodeIds/recipe/nodeMap/protectedPaths/writePaths/reviewRequirements`，全部 ID/路径为副本命名空间（`nodeMap` 的键为源 ID）。依赖自动包含指定根的后代和全部快照内祖先；**重叠兄弟、背景材质和邻近对照仍需显式列入**，不靠工具猜测语义。不要把页面根作为局部依赖种子导致全树进入每个场景；页面根作为祖先时只纳入自身属性。最终整页验收可另用根作为场景。
 
-`reviewRequirements` 在写入前登记 `{id,acceptance,nodeIds}`，至少包含 `theme-consistency/clarity/hierarchy`；存在表面边界或控件状态时，分别登记 `surface-discernibility/state-discernibility`，不能合并成文字可读或笼统 clarity；按实际角色再包含按钮显著性、CTA 最强操作、Icon 清晰度、文字、材质和用户专属规则。规则 ID/验收条件来自第 5 节冻结的清单，`recipe.ruleLedgerHash` 引用其指纹。验收条件不得由失败结果反推或临时放宽。
+`reviewRequirements` 在写入前登记 `{id,acceptance,nodeIds}`，至少包含 `theme-consistency/clarity/hierarchy`；存在 Icon 底托、选中 Tab 与主要按钮时，`hierarchy` 必须明确验收 `icon-container < selected-tab < primary-button`。存在表面边界或控件状态时，分别登记 `surface-discernibility/state-discernibility`，不能合并成文字可读或笼统 clarity；按实际角色再包含按钮显著性、CTA 最强操作、Icon 清晰度、文字、材质和用户专属规则。规则 ID/验收条件来自第 5 节冻结的清单，`recipe.ruleLedgerHash` 引用其指纹。验收条件不得由失败结果反推或临时放宽。
+
+`theme-consistency` 的 acceptance 同时包含已选 `accentFamilyPlan`：Icon 稳定主体是否来自连续背景环境，深色 UI 的 `number/icon` 是否同 Hex，以及数字/Icon/按钮的显著家族关系。Icon 的小面积金属反射单独记录材质职责，不据此把稳定主体改成新的高亮色。
 
 `visual-review.json` 含 `{sceneId,status,reviewedAt,notes,screenshots,checks}`；每个 check 为 `{id,status,observation,comparison,nodeIds,screenshots}`。checks 必须完整覆盖预登记条件，实际观察写出主体、材质或状态的表现，comparison 写出与真实背景/弱控件的关系；不能仅写“协调、可读、没问题”。逐项引用实际查看的截图和节点；一个截图可以证明多项。`fail/unknown`、缺项、漏节点、无比较或截图均不能封存 PASS；不适用必须在预检清单中有证据，不能验收时临时用 N/A 消除失败。`reviewedAt/capturedAt` 必须带时区。
 
@@ -134,7 +158,17 @@ python3 scripts/theme_audit.py color-relations source-before.json clone-now.json
 
 `color-relations.json` 是 `sourceAudit.sourceColorRelations` 的输入视图：`{schemaVersion:1,groups:[{id,reason,paths:[颜色通道路径,...]}]}`。每组至少两个成员，`reason` 记录同角色/状态/材质/等价宿主或连续同色表面证据；不能按旧 RGB 全局分桶强制不同角色使用同一新色。它检查组内对应通道一起换成一致的新颜色，不检查新旧 RGB 相同。路径指向源 ID 命名空间下的完整 RGB(A) 对象，如 `/nodes/1:2/props/fills/0/color` 或 `/nodes/1:3/props/fills/0/gradientStops/0/color`，不能只填 r 通道。同色文字不同状态的 Alpha 单独保留，不进入 RGB 等价比较；Paint/祖先 Alpha、渐变几何和实际合成仍由结构及视觉检查负责。
 
+关系成员按原稿语义、状态、材质职责和真实宿主在选新色前确定；**不得把目标 RGB/Recipe 值放进分组键**，也不得在成员不一致时拆组让审计通过。源稿已存在的宿主变体按其证据区分，不按错误目标色区分。`relationType` 缺省为 `source-equivalence`；有预先声明的 `basis` 时可用 `target-shared` 检查跨角色共享目标 RGB，或用 `hue-family` 加本次场景的 `maximumHueDistanceDegrees` 检查同族有彩色主体。高光/中性色单独分工，不用不稳定 Hue 判断中性表面。普通小按钮与 CTA 的稳定主体路径必须共同引用 `schemeAnchorContract.button` 并进入 `target-shared`/交互外观家族；不能只检查 Hue 接近，也不能只比较两处 Tab。
+
+同一显示表面由不同底色/Alpha/宿主合成时，另加 `displayed-surface-continuity` 机器规则，verifier 为 `{type:"displayed-relations",groups:[{id,nodeIds,xy:[原生截图坐标,...],nativePixels:[宽,高],maximumChannelDelta:本次容差}]}`。Phase 3 冻结同职责空白采样点；采样覆盖 Tab 底与下方实际容器，避开媒体、字形、指示条及局部高光。`finalize` 的 `displayedSamples` 指向 `{sourceHash,actualHash,groups:[{id,source:[{image:{path,sha256},xy},...],actual:[...]}]}`，绑定对应快照并核验源/新像素关系。实际图片必须同时属于新鲜视觉门禁证据。该检查验最终合成，不要求参与合成的裸 RGB 相同，也不能以“基底同色”抵消最终断层。没有可验证样本或源稿关系不成立时，重新定位关系，不声称已经完成机器验收。
+
 先从原稿建立分组，再由预检配方生成内存中的计划快照运行同一检查，明确标为计划验证；试色、扩展后以实际读回快照再次验证。语义拆分理由另记 `themeDecision` 并更新成员关系，不从错误结果反推预期。跨场景关系在双方已完成换肤后验证，未换肤成员不得误报为已通过。
+
+原稿存在同族主要小按钮和 CTA 时，`colorManifest.schemeAnchorContract.button` 必须保存共同 RGB；每个主要小按钮与 CTA 至少一个稳定主体通道标记 `anchorId=button`，执行审计直接核对这些目标值等于共同锚点。`button-appearance-family` 仍是必需机器规则，verifier 用 `displayed-relations`，组为 `{id,relationType:"appearance-family",basis,carrierPaths,nodeIds,xy,nativePixels,additionalLightnessSpread,additionalColorSpreadDeltaE76}`，检查派生暗部、高光和真实合成没有造成可见异色分裂。`button.material/cta.base/cta.material` 专指该主要交互家族；次级、禁用或源稿明确非等价的控件用有依据的独立语义角色，不能把失败成员事后改为次级。`carrierPaths` 包含该家族全部实际参与的对应材质通道，每组同时包含小按钮与 CTA；源通道清单自动核对联合组与 `control-family-consistency` 的完整范围，不能仅登记 Tab 或把大小按钮拆成两个各自通过的组。
+
+六色方案的精确执行由 `scripts/execution_audit.py` 的 `scheme-anchor-conformance` 统一检查：`schemeAnchorContract` 必须且只能包含 `background/card/number/icon/button/tab`，每个角色至少有一个稳定可见通道标记相同 `anchorId`，且 `target` 与锚点 RGB 完全一致。只保持 Hue 家族、不绑定代表值，或把 Tab 错绑到按钮/Icon，都不能通过。该机器检查在最终审计中必跑；代表试色阶段使用同一逻辑做扩展前预检。
+
+`xy` 冻结原生截图中各成员的同职责主体取样，稳定主体、对应受光区分别比较，不拿小按钮主体与 CTA 窄高光相比，也不只取最有利的单点。样本沿用 `displayedSamples` 证据格式与新鲜门禁绑定。工具从实际合成 sRGB 计算 CIELAB L* 和 ΔE76，要求新稿的组内明度跨度/色差不超过原稿跨度加写入前明确的情境余量；两个余量分别给出、须有限且非负，无统一默认值。这里约束的是同族内部接近关系，不冻结原稿绝对 L*，也不恢复跨模式逐点对比度下限。数值通过仍须检查完整按钮与各自真实宿主上的视觉重量、材质和全局操作优先级。失败后改颜色或重新诊断源稿关系，不能从失败数值反推放宽余量。
 
 `color-relations` 是必需机器规则，verifier 为 `{type:"color-relations",groupsHash:完整关系文件的digest}`；Phase 3 冻结，finalize 必须引用 `colorRelations` 并重新比较实际结果。确无同色关系时仍提供 `{schemaVersion:1,groups:[]}`，verifier 另附 `emptyEvidence` 说明原稿事实，不能漏掉整条规则。有依据的角色/宿主变体须在写入前更新登记表与冻结规则，并使相关门禁失效；不能从实际错误颜色反推拆组。
 
@@ -144,15 +178,17 @@ python3 scripts/theme_audit.py color-relations source-before.json clone-now.json
 
 执行标准与覆盖职责只维护在《验收规则》第 5.1 节。复用 `contrast_audit.py`，不临时重写亮度公式或手写 PASS：
 
+普通半透明文字/图形叠在复杂宿主上时，颜色 spec 可用 `{host:{image:{path,sha256},xy:[x,y]},layers:[{colorPath,alphaPaths}]}`：宿主来自经哈希验证的原生截图无字形区域，前景来自真实快照的 NORMAL SOLID Paint；只乘一次实际 Paint/节点/祖先 Alpha，不能用抗锯齿字形像素代替前景。
+
 ```sh
 python3 scripts/contrast_audit.py source-before.json clone-now.json contrast-samples.json contrast-relationships.json --map node-map.json --out contrast-baseline-audit.json
 ```
 
-`contrast-relationships.json` 为 `{pairs:[{id,kind,nodeIds,sampleIds}],emphasisOrders:[{id,strongerPairId,weakerPairId,sampleId}]}`，kind 为 `text/surface/state/icon/button`，nodeIds 使用源 ID，sampleIds 为已声明的采样职责 ID。无可比较顺序时 `emphasisOrders:[]`，旧数组输入仅兼容无顺序情形。顺序的两项必须在源/新各自共享相同的实际宿主颜色和采样职责，且原稿 stronger 的比值确实更大。写入前确定范围，不能从失败结果反推验收条件。
+`contrast-relationships.json` 为 `{policy:"source-baseline"|"contextual",decisionContext:{sourceUiMode,targetUiMode,adaptationMode,reason},pairs:[{id,kind,nodeIds,sampleIds,minimumContrast?}],emphasisOrders:[{id,strongerPairId,weakerPairId,sampleId}]}`，kind 为 `text/surface/state/icon/button`，nodeIds 使用源 ID，sampleIds 为已声明的采样职责 ID。无可比较顺序时 `emphasisOrders:[]`，旧数组输入仅兼容无顺序情形。顺序的两项必须在源/新各自共享相同的实际宿主颜色和采样职责，且原稿 stronger 的比值确实更大。写入前确定范围，不能从失败结果反推验收条件。
 
-`contrast-samples.json`：`{schemaVersion:1,sourceHash,actualHash,pairs:[{id,kind,nodeIds,samples:[{id,basis,source:{foreground,background},actual:{foreground,background}}]}]}`。两种颜色输入：`{layers:[{colorPath,alphaPaths:[]},...]}` 为自下而上的 NORMAL 纯色实际属性路径、以不透明宿主开始；或 `{image:{path,sha256},xy:[x,y]}` 为包含真实背景的原生截图像素。basis 写明叠层/取样依据。不能把复杂渐变或其他混合伪装为纯色叠层；脚本不推断真实遮挡、语义与采样代表性，须按视觉门禁核实。颜色/透明度路径采用源 ID 的规范化空间；sourceHash/actualHash 使用 `theme_audit.digest(snapshot_document(...))`，actual 文档先用 `mapped_document` 完整映射。
+`contrast-samples.json`：`{schemaVersion:1,policy,decisionContext,sourceHash,actualHash,pairs:[{id,kind,nodeIds,samples:[{id,basis,source:{foreground,background},actual:{foreground,background}}]}]}`。两种颜色输入：`{layers:[{colorPath,alphaPaths:[]},...]}` 为自下而上的 NORMAL 纯色实际属性路径、以不透明宿主开始；或 `{image:{path,sha256},xy:[x,y]}` 为包含真实背景的原生截图像素。basis 写明叠层/取样依据。不能把复杂渐变或其他混合伪装为纯色叠层；脚本不推断真实遮挡、语义与采样代表性，须按视觉门禁核实。颜色/透明度路径采用源 ID 的规范化空间；sourceHash/actualHash 使用 `theme_audit.digest(snapshot_document(...))`，actual 文档先用 `mapped_document` 完整映射。
 
-在 `contrast-baseline` 规则设置 `verifier:{type:"contrast-baseline",relationships:[...],emphasisOrders:[...]}`，样本文件同时携带完全相同的 `emphasisOrders`，最终 spec 引用 `contrastSamples` 文件。finalize 从最终新鲜快照重算，拒绝旧指纹、缺失/重复关系或采样、范围变化、任一比值回退，以及已冻结的强弱顺序倒置或相对力度回退；最多 `1e-9` 的计算误差不构成设计容差。原稿比值低仍需视觉可辨性通过，脚本不自动批准视觉 PASS。新旧截图使用相同的原生量化口径；同一关系的复杂背景应冻结足够的可比较样本职责，而不是事后只挑最有利像素。
+在 `contrast-baseline` 规则设置 `verifier:{type:"contrast-baseline",policy,decisionContext,relationships:[...],emphasisOrders:[...]}`，样本文件同时携带完全相同的 policy、decisionContext 与 `emphasisOrders`，最终 spec 引用 `contrastSamples` 文件。finalize 从最终新鲜快照重算，拒绝旧指纹、缺失/重复关系或采样、范围变化、策略/模式/画风依据漂移、适用数值下限失败，以及已冻结的强弱顺序倒置；仅 source-baseline 拒绝任一源比值或相对力度回退；最多 `1e-9` 的计算误差不构成设计容差。contextual 下没有明确 minimumContrast 的样本只记 measured，测量完整不等于视觉 PASS；minimumContrast 仅来自用户明确标准或写入前有依据的角色目标，不自动套 WCAG，不从失败结果反推宽松下限。所有策略仍需真实可辨性、主体明快、操作/状态层级与材质视觉门禁通过。旧文件缺 policy/context 时仅兼容原 source-baseline，不能静默降级为 contextual。新旧截图使用相同的原生量化口径；同一关系的复杂背景应冻结足够的可比较样本职责，而不是事后只挑最有利像素。
 
 ### 4.8 视觉单元与局部修正闭包
 
@@ -217,7 +253,7 @@ python3 scripts/execution_audit.py complete source-before.json clone-now.json co
 python3 scripts/execution_audit.py finalize finalization-spec.json --out release-check.json
 ```
 
-spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/policy/nodeMap/ruleLedger` 的 JSON 路径和 `visualScenes:[{spec,gate}]`，必须同时引用 `colorRelations/contrastSamples/visualUnits`。finalize 逐项重算冻结同色关系、原稿与新稿合成对比度及可比较的强调顺序，并验证完整视觉单元的通道覆盖及新鲜上下文检查；缺证据、任一样本/关系失败均不放行。至少包含一个 `reviewScope:"whole-page"` 的最终整页场景，依赖种子为最终根，`hierarchy` 覆盖根并有整页截图，不能只凭局部 PASS 放行。finalize 同时重算原稿不变、差异许可、全量覆盖和目标完成；核对每个视觉场景、规则哈希及全部 scopeNodeIds。旧执行记录缺少新增规则或登记表时不能直接沿用旧 PASS，须补建原稿证据、冻结新规则并完成相关复验，历史记录保留。其他机器规则使用 `verifier`：`{type:"preserve-values",paths:[源属性路径]}` 精确保留；`{type:"preserve-hsv",paths:[源 RGB 对象路径],channels:["s","v","a"]}` 核对指定源通道；`{type:"target-values",targets:[{path,expected}]}` 核对声明目标。可比较的数值只容许已定义的浮点读回误差；目标路径使用源 ID 的规范化比较空间。当前工具未支持的能力应补实际 verifier，不能改为人工声称的机器 PASS。
+spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/policy/nodeMap/ruleLedger` 的 JSON 路径和 `visualScenes:[{spec,gate}]`，必须同时引用 `colorRelations/contrastSamples/visualUnits`。finalize 先从全量源通道核对主要按钮/CTA 联合验收范围及必需的主体明度/色差关系，再逐项重算冻结同色关系、原稿与新稿合成对比度及可比较的强调顺序，并验证完整视觉单元的通道覆盖及新鲜上下文检查；缺证据、任一样本/关系失败均不放行。至少包含一个 `reviewScope:"whole-page"` 的最终整页场景，依赖种子为最终根，`hierarchy` 覆盖根并有整页截图，不能只凭局部 PASS 放行。finalize 同时重算原稿不变、差异许可、全量覆盖和目标完成；核对每个视觉场景、规则哈希及全部 scopeNodeIds。旧执行记录缺少新增规则或登记表时不能直接沿用旧 PASS，须补建原稿证据、冻结新规则并完成相关复验，历史记录保留。其他机器规则使用 `verifier`：`{type:"preserve-values",paths:[源属性路径]}` 精确保留；`{type:"preserve-hsv",paths:[源 RGB 对象路径],channels:["s","v","a"]}` 核对指定源通道；`{type:"target-values",targets:[{path,expected}]}` 核对声明目标。可比较的数值只容许已定义的浮点读回误差；目标路径使用源 ID 的规范化比较空间。当前工具未支持的能力应补实际 verifier，不能改为人工声称的机器 PASS。
 
 `control-family-consistency` 还要求至少一个有效场景在同一次比较中覆盖该规则全部冻结 scope，不能由多个各只覆盖一张卡的 PASS 累加通过。可从同一原生全页图裁出并排片段，保留裁切来源/比例，并实际查看相邻与远处同族实例；整页层级检查可共用图像，不额外反复渲染。
 
@@ -225,11 +261,16 @@ spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/polic
 
 ### 5.4 缩短调用链，保持检查覆盖
 
+- **配色提案使用快速只读路径。** Phase 0/1P 首次远程读取只返回：页面与两个候选顶层节点的 ID/类型/尺寸、原 UI 缩略图、新 KV 原生截图、直接影响 `sourceUiMode`/显著性/同族控件的精简摘要，以及新旧 KV 画风比较所需证据。禁止在同一返回中附带全树 Paint/Gradient、全部文字、全部路径或大段节点 JSON；预计超过约 12KB 时先聚合计数，再按明确缺口定向读取。不要对 `PAGE` 截图，也不要用 `figma.io.write` 代替视觉截图；直接对 UI/KV 节点使用 `get_screenshot` 或 `node.screenshot()`。高长 UI 先取一张缩略整页图，只有看不清的关键区域才补原尺寸局部图。
+- 新 KV 截图只下载一次到本次 `runWorkspace`。优先运行 `python3 scripts/analyze_kv_preview.py <kv.png> --out <runWorkspace>/kv-analysis-fast.json` 生成候选色群和底边连续性统计，再由视觉判断环境/前景/材质身份；不为聚类临时引入 NumPy、科学计算依赖或重复导出。配色预览只在候选通过前置门禁后生成一次，修改色值才重渲染。
+- 用户选色前不采集或传输完整 `snapshotThemeTree`，不建立逐实例 `layerStacks`、全量 `visualUnits`、所有文字区间和对比度关系。用户选色后进入 Phase 1W，一次性采集完整原稿快照并建立写入级基线，然后才允许 Phase 3；若用户未选择，昂贵审计不会白做。此延迟只优化时机，不降低任何写入或最终验收要求。
+
 - 原稿未变化时，复用已经完成的视觉单元登记表、关系图、通道分类和灰度分析；颜色配方变化不重建结构关系。每次局部修正先用 `impact` 列闭包，按完整单元一次读回/截图/复验，其他有效证据保留；共享背景实际影响全页时仍复验全部相关单元。最终全页检查不能省略。记录分析、写入、读回传输、截图及验收各段实际耗时，再评价性能，不把本地脚本耗时当作整次换肤耗时。
 
 - 普通换肤复用完整快照、样式/材质分组及真实承载映射，不为每个阶段重新输出整树；原稿首次与最终、副本结构变化后和最终需完整核对。中间按具体操作与依赖读回，未变快照不再次传输；截断结果不能冒充完整文件。只读分析在依赖独立时合并调用，写入、读回和依赖变化保持顺序。
-- 从全实例清单按实际材质/状态/背景等价关系选最少代表，同组只试一个完整场景。试色接近全页操作量时先检查分组是否过碎；非等价项仍补试，不为省时合并。明确方向先执行一套有依据方案，仅对失败或关键疑点增加对照，不固定生成三套全页方案。
-- 用 `batch-plan` 合并同一阶段、同一有效门禁组的原子操作，默认每批至多 64 项、约 48KB，是可调起点。每批输入只带涉及的节点映射/操作，不反复带全页映射和大快照；不把 Phase 5 与 Phase 6 合并，不把 detach/clone 混入颜色批次。实际 API 限制或耗时决定调整，超时后先读回，不盲目重发。
+- 从全实例清单按实际材质/状态/背景等价关系选最少代表，同组只试一个完整场景。试色接近全页操作量时先检查分组是否过碎；非等价项仍补试，不为省时合并。Phase 2 按《配色方案提案》展示无金属 4/2 套或金属 6/3 套只读色板；用户选定后，真实 Figma 试色只执行这一套完整方案，仅对失败或关键疑点增加局部对照，不把全部候选都写进页面。
+- 用 `batch-plan` 合并同一阶段、同一有效门禁组的原子操作，按**序列化后的请求字节数和操作数共同切分**；可用 `scripts/split_revision_ops.py`，默认至多 60 项/约 36KB 操作 JSON，为本工具 50KB 的完整 `code` 限制预留 JS helper 空间。生成后测量实际完整代码长度，再写入；不要因方便而固定每批 8 项等极小批次。若单批真实执行过慢、超时或接近请求上限，再依据测量拆分并先读回，不盲目重发。每批只带涉及的节点映射/操作，不反复带全页映射和大快照；不把 Phase 5 与 Phase 6 合并，不把 detach/clone 混入颜色批次。
+- 完整快照的**校验**不等于重复传输完整快照。已有本地冻结模板时，先用 `scripts/generate_figma_snapshot_verify_js.py --compact <snapshot>` 在 Figma 内完整遍历并返回全树指纹、节点数和全部读取错误；不匹配再定向读取差异或做分段传输。副本最终审计也优先在 Figma 内完成全树遍历、结构/保护比较与全量目标读回，仅返回紧凑失败清单；若缺少可重建的预期状态或比较器无法覆盖特殊属性，才传输完整副本快照。任何紧凑证明都不能跳过节点、隐藏实例子层、原稿差异或已批准读取异常的单独披露。
 
 - 大树传输先核对本次接口预算。本次实测 `use_figma.code` 上限 50,000 字符，返回文本约 20,500 字符会截断；代码预算建议留到 45,000，分片使用至多 17,500 ASCII 字符。操作数预算之外还须检查包含 helper 的实际代码长度。颜色批次复用 `snapshot_fingerprint.js` 与 `figma_apply_color_diff.js`；生成 after 指纹前须把已声明目标 RGB(A) 规范为 Figma 原生 float32，避免 Fill 自动同步 Vector region 后因 double/float32 表达差异误报冲突，实际 before 仍精确保留。只传原子属性的 before/after 指纹和精确颜色差异，在实际节点完整 Paint/Vector 数据副本上应用，不能把差异片段直接覆盖为完整 Paint。支持普通属性标量与混色文字范围；Fill 引发的 Vector region 自动同步仅在完整 after 指纹吻合时作为完成项跳过，否则仍为冲突。
 
@@ -255,33 +296,45 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 #### 必须执行
 
-- 解析唯一目标 Frame、新 KV 和旧 KV 图片 Paint。
+- 解析唯一目标 Frame、新 KV 完整视觉单元及旧 KV 载体/图片 Paint；先判定 `single-image|composite-kv`，复合 KV 不得降格为某个内层 IMAGE。
 - 确认可用 Figma 写入与截图能力。
+- 用 `scripts/run_workspace.py init` 创建唯一临时 `runWorkspace`；所有任务级证据只写入该目录，不读取历史任务文件猜测当前输入。
 - 初始化四个执行产物及 `mutationPlan.executionPhaseLog`；若为恢复任务，先读取既有 runId、副本、快照、批次和门禁记录，不创建第二份副本。
 
 #### 通过条件
 
-目标、KV、旧 KV Paint 均唯一且可访问；否则在任何写入前停止。
+目标、新 KV 完整视觉单元、旧 KV 载体/Paint 均唯一且可访问；否则在任何写入前停止。
 
-### Phase 1：只读原稿审计
+### Phase 1：只读原稿审计（1P 提案门禁 + 1W 写入门禁）
 
-完整执行《Figma 执行规范》的检查与快照要求。
+Phase 1 分为两个只读门禁。Phase 1P 在 Phase 2 前完成，只收集生成可靠配色提案所需的最小证据；用户选色后返回 Phase 1W，完整执行《Figma 执行规范》的检查与快照要求。Phase 1W 通过前禁止进入 Phase 3、复制页面、替换 KV 或写 UI。
 
-#### 必须产出 `sourceAudit`
+#### Phase 1P 必须产出 `sourceAudit.proposalBasis`
+
+- 唯一目标 UI 与新 KV 完整视觉单元的 ID、类型、尺寸、顶层关系，以及原 UI/新 KV 各一张真实截图；不截图 PAGE。
+- `sourceUiMode`、页面/卡片/容器/普通 Icon 底托/选中 Tab/主要按钮与 CTA 的原始显著性顺序和业务优先级；只读精简代表，不枚举所有实例。
+- 原 UI Hero 与新 KV 的画风比较、旧 Hero 可见下缘与新 KV 可见下缘证据；能判断普通换肤或是否需要进一步检查画风迁移。
+- 影响提案的保护风险摘要：Hero 功能入口、媒体、前三名和独立营销 Banner 是否存在。此时只定位风险范围，不建立最终节点白名单。
+
+#### Phase 1P 通过条件
+
+目标与新 KV 唯一；截图可读；`sourceUiMode`、显著性骨架、画风差异和接缝证据足以支持 Phase 2。缺失时只定向补读相应区域，不回传全树。通过后允许进入只读 Phase 2，但不表示完整原稿审计通过。
+
+#### Phase 1W 必须产出完整 `sourceAudit`
 
 - 原稿结构快照、所有 Paint/Effect/IMAGE 分类、`paintPresenceMask` 与第 5.2 节全量颜色通道清单；全部通道分类完成，不留未知角色。
 - 全部小按钮、大按钮、状态和卡片氛围的 `layerStacks`，按实际层级区分基底、反射、罩染、塑形暗部、蒙版和位图；不能只读取单层颜色。
 - 语义组件到真实 `visualSurfaceCarrier` 的映射。
 - 第 4.8 节的 `visualUnits`：完整结构到全部实际颜色承载层、宿主/叠层依赖与审核根的登记表，与全量通道清单逐项对照；深层列表/裁切 Frame 不能漏掉。
 - `sourceColorRelations`：需保持的等价实例同色通道与连续同色表面，包含精确颜色通道和角色/材质/状态依据；按《颜色决策规则》第 9 节建立，不仅凭旧 RGB 或共享 Style/Variable 强制跨角色同色。所有非保护角色仍按新 KV 换色，变体在写入前明确。
-- 组件实例、复合异形表面、卡片氛围层、KV 衔接信息带、Tab 状态、媒体保护区与前三名颜色保护清单；Hero 外框、旧图偏移、祖先裁切/蒙版链及可见安全窗口。
+- 组件实例、复合异形表面、卡片氛围层、KV 衔接信息带、Tab 状态、媒体保护区、前三名颜色保护清单与独立营销 Banner 整棵保护清单；Hero 外框、旧图偏移、祖先裁切/蒙版链及可见安全窗口。营销 Banner 须以构图/语义证据区分于普通业务卡，并从写色和残留清理目标中排除。
 - 按《验收规则》第 5.1 节建立全实例对应的 `contrastRelationships` 与实际合成基线。
-- 原稿整页及关键区域的真实灰度证据，以及 `sourceSalienceMap` 与 `sourceLuminanceTopology`；明确页面、卡片、文字、数字、Icon、Tab 和操作的原有优先级。
+- 原稿整页及关键区域的真实灰度证据，以及 `sourceSalienceMap`、`sourceLuminanceTopology` 与不含目标色的 `semanticPriorityMap`；明确页面、卡片、文字、数字、Icon、Tab 和操作的原有优先级。
 - 前置 `themeDecision.kvStyleComparison`：先读取新旧 KV，比较材质、体积、插画方式、线条和纹理，记录差异为轻微/明显/证据不足；再核对原 UI 的冲突节点。仅颜色或 IP 改变不触发迁移，明显画风变化也不等于全页重做。
 
-#### 通过条件
+#### Phase 1W 通过条件
 
-页面背景、卡片、容器、普通文字、标题、关键数据、Icon、标签、Tab、小按钮和 CTA 中实际存在的角色均已识别；新旧 KV 画风比较及原 UI 冲突检查已完成，先确定普通换肤或局部画风迁移，再进入配色分析。不允许边写边第一次判断角色。
+页面背景、卡片、容器、普通文字、标题、关键数据、Icon、标签、Tab、小按钮和 CTA 中实际存在的角色均已识别；新旧 KV 画风比较及原 UI 冲突检查已完成，普通换肤或局部画风迁移已确定。不允许边写边第一次判断角色。Phase 1W 可复用 Phase 1P 的截图与稳定结论，但必须补齐完整快照、全通道、逐实例材质、保护清单、视觉单元、同色关系和对比度基线。
 
 ### Phase 2：新 KV 分析
 
@@ -291,32 +344,41 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 - `visualIntentProfile`、颜色角色、环境/主体/材质/高光证据。
 - `adaptationMode=color-only/style-adaptation` 及画风差异证据；启用画风迁移时记录 `visualLanguage` 的体积、材质、光影、边缘与纹理证据及角色分配，不默认手绘或任何特定画风。
-- `requestedUiMode`、`targetUiModeSource=user/kv-inference`，以及 `source/targetHeroEdgeTone`、`source/targetUiMode`、`source/targetSurfaceDepth` 与 `themeTransition`。
-- `uiContinuationPalette`、`highlightOnlyColors`、光照方向与材质空间模式；在既有 `kvAnalysis` 内保留有真实像素/区域依据的 `colorAnchors`，区分稳定环境、环境光、主体与反光。
+- `sourceKvTone/sourceUiMode/targetKvTone`、`requestedUiMode`，以及 `source/targetHeroEdgeTone`、`candidateTargetUiModes/candidateSurfaceDepths`；半透明卡按实际合成表面判断 UI 模式，不从 KV 深浅或 Paint Alpha 直接推断。
+- `uiContinuationPalette`、`highlightOnlyColors`、光照方向与材质空间模式；在既有 `kvAnalysis` 内保留有真实像素/区域依据的 `colorAnchors`，区分稳定环境、环境光、主体与反光。主体或标题存在明确金属视觉时，另登记 `metalAccentEvidence` 的来源区域、金属家族、稳定本色/中间调/暗部/高光/环境反射、显著性与可信度；没有时明确为 `null`，不能由色名或题材补造。多个环境候选须记录环境身份、连续面积/横向覆盖、空间稳定性、实际可见 Hero 下缘接触、纹理具体程度、前景风险和延展适合度。另生成 `heroBottomExtensionDecision`：底部杂乱或由局部前景主导时排除；大片环境纯色或低纹理渐变时列为强候选，再与整张 KV 的大范围环境锚点比较。记录 `selected-solid|selected-gradient|eligible-not-selected|not-suitable|existing-transition`、采样区域、代表色/渐变、覆盖率、空间身份、是否采用、理由和衔接证据，不能只写主观结论。
+- 在生成 Hex 前，继承 Phase 1 的显著性与业务优先级证据，并按《颜色决策规则》第 3.0–4 节为每套候选依次冻结 `surfaceFamilyPlan`、`targetSalienceOrder / roleLightnessPlan / targetLuminanceTopology`、`controlColorSalienceOrder=icon-container < selected-tab < primary-button` 与 `colorClarityPlan.lightnessAndChroma`；同一模式的同色系/撞色方案默认共用表面家族和明度拓扑，撞色不扩散到大面积表面。浅色 UI 须明确页面有彩且不近白、卡片更亮可近白、容器层级可辨；主要按钮/CTA 记录 `buttonToneDirection=bright|clean-deep`，偏浅宿主上的干净深色必须有 KV/金属证据并比明亮候选形成更清楚分离。功能 Icon 图形须清楚并有独立 `icon` 锚点；普通 Icon 底托只淡淡带色但在 1:1 下必须与卡片可辨，选中 Tab 比底托明显，主要按钮/CTA 再明显一层，且底托与 Tab 都不暗沉。
+- 在生成 Hex 前为每套候选冻结 `accentFamilyPlan`：普通功能 Icon 的稳定主体从背景/卡片连续环境家族提取；深色 UI 的高亮数字代表 `number` 与 `icon` 锚点使用同一 Hex，按钮可成为第二高彩家族。浅色 UI 的数字可另选，但默认不形成第三高彩家族；有证据的例外按《配色方案提案》登记，局部金属反射不算稳定主体。
+- 按《配色方案提案》从锚点整理 3–5 个来源色、`kvPrimaryHue`、`metalAccentEvidence` 及表面撞色基准 `surfaceContrastBasis`。无可靠金属证据时生成规定的 4 套或 2 套同色系/色环撞色方案，撞色明确 `contrastDerivation=hue-opposition`；有可靠金属证据时生成规定的 6 套或 3 套 `metallic-analogous / gold-bright / clean-deep` 方案。正常明亮金色优先落在规定的暖亮金范围，主体中间调呈现金黄、高明度和有效彩度，不得用暗铜、棕橙或土黄替代，并默认规划深棕按钮字。缺少用户要求方案类型的必要基准时先处理输入阻塞，不伪造或静默减量。内部保留完整门禁与角色方向，面向用户只展示 `background/card/number/icon/button/tab` 六色投影；逐套完成 `proposalColorPreflight` 和面积化预览复核，只把全部通过的方案写入 `themeDecision.paletteProposal`。本阶段不复制页面、不替换 KV、不写 UI。
 
 #### 通过条件
 
-目标深浅符合用户明确指定；未指定时，自动判断由稳定环境场、暗部连续性、接缝、主体曝光性质和整页灰度共同支持，不由 KV 底部或中央高光单独决定。两种来源均须完成 KV 色彩与衔接分析，原稿模式仍按实际 UI 判断，再据此确定跨模式规则。
+旧/新 KV tone 与原 UI mode 均有独立证据；新 KV 深浅由稳定环境场、暗部连续性、接缝、主体曝光性质和整页灰度共同支持，不由 KV 底部或中央高光单独决定。主表面锚点已按环境身份、连续面积、稳定性、实际接缝和延展适合度比较；底部只在满足可见、连续、面积、纯度/稳定性与环境身份条件时作为延伸依据。方案数量和角色内容符合《配色方案提案》，且每套均有来源锚点、单一表面家族、目标显著性顺序、明度拓扑、彩度/受光目标、代表 Hex、角色映射、风险说明及 `proposalColorPreflight=pass`。浅色 UI 另须正向证明页面背景明亮且保留主题彩度、卡片更亮可近白、内部层级清楚；主要操作为明亮有彩，或为在偏浅宿主上更清楚且有来源证据的干净深色，二者都不得灰闷、近黑或只靠局部高光。普通 Icon 底托、选中 Tab、主要按钮/CTA 的颜色显著性依次增强；底托与 Tab 淡淡带色且不暗沉，三者不能近似或倒置。任何表面跨家族、暗沉、灰闷、只靠局部高光成立或大面积色相过多的方案不得进入用户选择。尚未得到用户选择时状态为 `awaiting-user-palette-choice`，在此处暂停后续写入。
 
-### Phase 3：换肤方案预检
+每套还须通过 `accent-family-economy`：`accentFamilyPlan` 与六个公开锚点相符，Icon 主体有连续背景环境来源；深色方案的 `number==icon` Hex 精确相等，二者在各自宿主均清楚；不能用宽泛的“同属冷色/蓝色”标签放行第三种肉眼割裂的亮色。
+
+### Phase 3：已选方案的换肤预检
 
 完整执行《颜色决策规则》，形成 `themeDecision`。
 
 #### 必须产出
 
-- 先依据原稿灰度与业务语义建立不含 Hue 的 `semanticPriorityMap`、`targetSalienceOrder`、`roleLightnessPlan` 和 `targetLuminanceTopology`，再生成下面的具体颜色候选。
-- 按不确定程度生成覆盖现有角色的完整候选方案，记录数量依据、最终方案、逐角色理由与实际考虑的淘汰理由；不为凑三套制造无意义方案。
-- 表面、卡片氛围、文字阶梯、标题、关键数据、Icon 图形与底托、标签、Tab、小按钮和 CTA 的独立 Paint Recipe；表面由 `surfaceFamilyPlan` 引用 KV 锚点并明确家族/层级，其他角色在自己的 Recipe 引用来源；存在底托时，记录其颜色来源与承托关系。
-- `colorClarityPlan`：记录第 3.2 节浅→浅保留条件是否适用及对应范围，结合 KV 明暗/色彩力度与实际宿主确定按钮/CTA/Icon 的突出方向；记录页面各层、主要操作、文字与状态应达到的彩度、感知明度、受光感和对比关系及渲染检查方法；用户授权参考设计师版本时，包含同角色参考研究与可迁移范围。
-- 按钮背景与浅/深文字的组合候选及真实背景对比度计划。
+- 进入本阶段前确认 Phase 1W 完整写入门禁已通过；只有 Phase 1P 或配色提案证据时不得继续。
+- 进入本阶段前确认用户已从 Phase 2 展示的 `themeDecision.paletteProposal` 中明确选择方案，并记录 `paletteSelection.status=selected`、方案 ID、原始指令和选择时间；用户未选择时仍停留在 Phase 2，不得开始本 Phase 的配方冻结或任何 Figma 写入。
+- 继承 Phase 1 的 `semanticPriorityMap` 以及 Phase 2 已通过的 `surfaceFamilyPlan`、`targetSalienceOrder / roleLightnessPlan / targetLuminanceTopology` 与 `colorClarityPlan.lightnessAndChroma`，把用户选定的关系色板展开为具体颜色配方。`targetUiMode` 和 `hueStrategy` 必须与选定方案一致，不由 AI 在预检中偷偷换成另一套；若逐层展开暴露冲突，退回 Phase 2 修正并重新展示，不得静默降低明快感或改换表面家族。
+- 冻结用户选中方案的 `schemeAnchorContract: background/card/number/icon/button/tab`，再展开表面、卡片氛围、文字阶梯、标题、关键数据、Icon 图形与底托、标签、Tab、小按钮和 CTA 的 Paint Recipe。六个锚点各自至少绑定一个稳定可见 `anchorId` 通道，目标 RGB 与公开方案完全一致；表面由 `surfaceFamilyPlan` 引用 KV 锚点并明确家族/层级，关键数字引用 `number`，功能 Icon 图形引用或有依据地派生自 `icon`，主要小按钮与 CTA 的稳定主体共同引用 `button`，Tab 选中态引用 `tab`。Tab 不得因执行方便改绑按钮/Icon 色。存在底托时记录颜色来源与承托关系，并把 `controlColorSalienceOrder=icon-container < selected-tab < primary-button` 写入 `hierarchy` acceptance、场景配方依赖和可比较的 `emphasisOrders`；这个顺序按最终合成存在感验收，不转成单一数值递增公式。按《颜色决策规则》第 3.0 节冻结 `hueRelationshipPlan`；撞色另冻结 `contrastDerivation`、使用的 `metalAccentEvidence` 或 `surfaceContrastBasis`、`buttonToneDirection`、面积主次及可见反差，并写进 `theme-consistency` 的 acceptance 和场景配方依赖，不能只登记“各角色都来自 KV”。
+- 同时继承所选方案的 `accentFamilyPlan` 到 Icon/数字/按钮配方及 `theme-consistency` acceptance；不得因金属梯度或组件变体，在已确认的六色锚点之外另设稳定高亮 Icon 主体。
+- 扩展 `colorClarityPlan`：保留 Phase 2 已确认的彩度、感知明度与受光目标，补充第 3.2 节浅→浅比较基线的适用性、最终是否沿用及精确通道、逐角色对比关系和渲染检查方法；用户授权参考设计师版本时，包含同角色参考研究与可迁移范围。不得把“后续会加材质”作为压暗当前主体色或放行灰闷方案的理由。
+- 按钮背景与浅/深文字的组合候选及真实背景对比度计划；一般启用的主要彩色按钮先验证白/近白字，小按钮与 CTA 共用文字方向。`gold-bright` 例外地默认验证深棕字，且不得为白字压暗金色；其他方案使用深色字须记录白字在实际文字覆盖区域失败、且无法在不破坏已选按钮锚点与材质的前提下修正主体的证据。
 - 画风迁移时，`styleAdaptationPlan` 须包含原形状家族、风格载体、逐属性允许差异与裁切安全范围。
 - 第 5.1 节 `ruleLedger`、全量 `colorManifest` 分类和覆盖差集校验通过；规则清单及目标在任何 UI 写入前冻结，场景引用同一指纹。
 - 冻结 `visualUnits`、同色关系及对应对比关系；可比较的同宿主强弱顺序进入 `emphasisOrders`。整组配方的计划快照先通过关系预检，普通写入与局部修正继承同一套约束。
-- `preflightThemeDecision=pass`。
+- `preflightThemeDecision=pass`，并绑定 `paletteSelection.schemeId` 与所选方案指纹。
 
 #### 通过条件
 
-候选以整页关系比较；CTA 和主要操作拥有正确显著性；色相不由题材或材质标签机械推出；旧 UI 色相未进入新方案。
+用户已明确选定一个方案；六色 `schemeAnchorContract`、来源锚点、模式、表面与交互关系完整，六个 `anchorId` 的目标值已通过机器预检，CTA 和主要操作拥有正确显著性；色相不由题材或材质标签机械推出，旧 UI 色相未进入新方案。背景、卡片、主要按钮/CTA 的色相关系满足第 3.0 节。无金属 `complementary` 方案须有可靠 `surfaceContrastBasis` 并与 `contrastDerivation=hue-opposition` 一致；金属方案须有可靠 `metalAccentEvidence` 并标明 `buttonVariant`。选择 `gold-bright` 时，实际按钮主体中间调必须保持正常明亮金黄、高彩度与清楚受光，不得落成暗铜、棕橙、土黄或由窄高光勉强显金，并已用深棕字作为默认方向验证。功能 Icon 图形引用 `icon`，小按钮与 CTA 共同引用 `button`，Tab 引用表面同系 `tab`，普通 Icon 底托与二者共同满足 `icon-container < selected-tab < primary-button`；缺任一关系不得通过。
+
+`accentFamilyPlan` 必须与已选六色及各角色稳定主体相符；Icon 无连续背景环境来源，或深色 UI 的 `number` 与 `icon` 锚点 Hex 不同，均不得通过。公开锚点若本身违反该计划，应回 Phase 2 重新展示并确认，不能在 Phase 3 偷改。
 
 ### Phase 4：复制并替换 KV
 
@@ -331,7 +393,7 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 #### 通过条件
 
-原稿未改变；只有一个副本；新 KV 全图已真实显示在 Hero 安全窗口内且无拉伸；Hero 外框、下方 UI 布局及功能叠层受保护；代表节点白名单在首次 UI 写色前确定。
+原稿未改变；只有一个副本；新 KV 已按 `kvFitPlan.fitMode` 和选定尺度真实显示且无拉伸：`preserve-scale-bottom-crop` 允许仅截去下方超高部分，只有用户明确要求完整显示时才要求四边全部可见；Hero 外框、下方 UI 布局及功能叠层受保护；代表节点白名单在首次 UI 写色前确定。
 
 ### Phase 5：代表性试色与视觉门禁
 
@@ -339,7 +401,9 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 
 按《局部试色与执行工具》第 1 节查看场景 1:1、灰度、模糊和缩略图；整页截图用于上下文和意外影响检查。只验已换肤场景的残留、层级、可读性和材质，未扩展旧皮肤不作为局部失败，也不声称整页通过。
 
-按《颜色决策规则》第 3、5–8 节和《叠层合成审计》验证各实际角色，记录 `buttonCompositeReview` / `cardAtmosphereReview` 及针对问题的对照试色。按第 3.0 节将 KV 原始环境区域与实际表面并排验证 `themeColorConsistencyAudit`；色相有疑点时比较该维度，不用按钮 V/字色比较代替。锚点与表面家族引用纳入场景配方依赖。无改善时按执行工具规则重新诊断，不用数值、文字说明或单层颜色代替真实视觉证据。
+按《颜色决策规则》第 3、5–9 节和《叠层合成审计》验证各实际角色，记录 `buttonCompositeReview` / `cardAtmosphereReview` 及针对问题的对照试色。复核 `heroBottomExtensionDecision`：选择底部延伸时在 KV→页面接缝的 1:1 图中验证起点连续及纯色/渐变趋势合理；底部不适合或未选择时，验证大范围环境背景与实际衔接方式自然，不能出现无解释的断层。同时在实际尺寸、灰度、模糊和整页重复中检查浅色 UI 的 Tab 与 Icon 底托是否淡淡带色且没有暗沉、沉重色块或高频暗点，并与主要按钮一起满足 `Icon 底托 < 选中 Tab < 主要按钮/CTA`；标签底板与文字不得淡成水印。`dark-to-light` 的卡顶光影逐层完成 keep/fade/remove-visually 判定，冗余氛围视觉移除后不得残留顶部暗块。禁用按钮须与正常态同配方，只以整体有效 50% 透明度区分。按第 3.0 节将 KV 原始环境区域与实际背景、卡片和主要操作并排验证 `themeColorConsistencyAudit`，再看同一截图派生的彩色模糊图与缩略图，确认相近家族或撞色反差及面积分工实际成立；色相有疑点时比较该维度，不用按钮 V/字色比较代替。代表写入后先读回六个 `anchorId` 与 `schemeAnchorContract` 完全一致，锚点、表面家族与色相关系计划引用纳入场景配方依赖。无改善时按执行工具规则重新诊断，不用数值、文字说明或单层颜色代替真实视觉证据。
+
+同一代表场景还要按 `accentFamilyPlan` 并排看数字、Icon、按钮的稳定主体；深色 UI 在真实宿主上同时验证数字/Icon 共色的清晰度。1:1 保材质细节，模糊/缩略图检查高频 Icon 是否形成额外亮色焦点。若问题在已确认的公开 `number/icon` 锚点本身，不能偷偷换值来试色，回 Phase 2 重新展示方案并取得选择；只在已选锚点周围修复金属暗部/高光时，仍须保留原色标关系并重验受影响场景。
 
 画风迁移模式还须执行《画风迁移规则》的代表性检查：强调数字、Icon、按钮与 Tab、外卡/内卡、裁切边缘。仅完成换色或添加统一描边不能通过。
 
@@ -367,3 +431,5 @@ python3 scripts/render_views.py whole-page.png region-views --regions pixel-regi
 本阶段必须覆盖原稿/副本结构、KV 适配、全部精确保护、文字与状态、真实合成材质、全 Paint/IMAGE 与渲染残留、逐实例上下文，以及完整五种视图和整页累计显著性。核对有效场景门禁、最终配方一致性和批次读回，无待更新实例、待恢复操作或未解决冲突；局部 PASS 不代替整页通过。
 
 任一失败返回对应 Phase，只修正并重验受影响依赖，最终刷新相关审计；不沿用修正前的截图/PASS，不带已知失败交付。
+
+通过后先提取完成回复需要的结果，再按第 3.1 节清理 `runWorkspace`；用户明确要求保留审计包时登记 `kept-by-user`。不得因为清理临时证据而省略最终审计，也不得在完成前提前删除恢复所需文件。

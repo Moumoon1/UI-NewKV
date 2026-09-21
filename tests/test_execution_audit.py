@@ -27,6 +27,216 @@ def manifest(source):
          'disposition': 'preserve'} for entry in inv['entries']]}
 
 
+class DisplayedContinuityChecks(unittest.TestCase):
+    def test_multiple_rules_share_evidence_without_skipping_failed_or_missing_group(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'native.png'
+            image = Image.new('RGB', (2, 1), (128, 128, 128))
+            image.putpixel((1, 0), (160, 160, 160)); image.save(path)
+            ref = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            values = [{'image': ref, 'xy': xy} for xy in [[0, 0], [1, 0]]]
+            rules = {name: {'id': name, 'kind': 'machine', 'applicable': True,
+                     'verifier': {'type': 'displayed-relations', 'groups': [
+                         {'id': name, 'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]],
+                          'nativePixels': [2, 1], 'maximumChannelDelta': limit}]}}
+                     for name, limit in [('wide', 32), ('strict', 1)]}
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': name, 'source': values, 'actual': values} for name in rules]}
+            results = execution.verify_all_displayed_relations(source, source, rules, evidence)
+            self.assertEqual(results['wide']['status'], 'pass')
+            self.assertEqual(results['strict']['status'], 'fail')
+            for groups in [evidence['groups'][:1], evidence['groups'] + evidence['groups'][:1],
+                           evidence['groups'] + [{'id': 'undeclared'}]]:
+                with self.assertRaises(ValueError):
+                    execution.verify_all_displayed_relations(source, source, rules, {**evidence, 'groups': groups})
+
+    def test_lightness_and_color_family_catches_same_hue_but_wrong_weight(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            def image_samples(name, colors):
+                image = Image.new('RGB', (2, 1)); image.putdata(colors); image.save(p / name)
+                ref = {'path': str(p / name), 'sha256': hashlib.sha256((p / name).read_bytes()).hexdigest()}
+                return [{'image': ref, 'xy': point} for point in [[0, 0], [1, 0]]]
+            group = {'id': 'buttons', 'relationType': 'appearance-family', 'nodeIds': ['icon'],
+                     'xy': [[0, 0], [1, 0]], 'nativePixels': [2, 1],
+                     'basis': 'Equivalent source button body regions; keep comparable material weight.',
+                     'additionalLightnessSpread': 2, 'additionalColorSpreadDeltaE76': 3}
+            rule = {'verifier': {'groups': [group]}}
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': 'buttons', 'source': image_samples('source.png', [(177, 219, 255), (180, 220, 255)]),
+                                    'actual': image_samples('actual.png', [(135, 88, 45), (201, 149, 74)])}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertEqual(result['status'], 'fail')
+            self.assertGreater(result['groups'][0]['actual']['lightnessSpread'], result['groups'][0]['limits']['lightnessSpread'])
+            # Near-identical dark bodies on a new light page remain valid: absolute
+            # source L* is not frozen across the dark-to-light transition.
+            evidence['groups'][0]['actual'] = image_samples('actual.png', [(135, 88, 45), (137, 89, 46)])
+            self.assertEqual(execution.verify_displayed_relations(source, source, rule, evidence)['status'], 'pass')
+            group['additionalLightnessSpread'] = float('inf')
+            with self.assertRaises(ValueError): execution.verify_displayed_relations(source, source, rule, evidence)
+
+    def test_equal_gray_but_different_colors_fail_the_family(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            values = {}
+            for name, colors in [('source', [(128, 128, 128)] * 2),
+                                 ('actual', [(38, 128, 204), (153, 102, 51)])]:
+                path = p / (name + '.png')
+                im = Image.new('RGB', (2, 1)); im.putdata(colors); im.save(path)
+                image = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                values[name] = [{'image': image, 'xy': xy} for xy in [[0, 0], [1, 0]]]
+            rule = {'verifier': {'groups': [{'id': 'same-gray', 'relationType': 'appearance-family',
+                     'basis': 'Comparable main bodies must share both lightness and color family.',
+                     'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]], 'nativePixels': [2, 1],
+                     'additionalLightnessSpread': 5, 'additionalColorSpreadDeltaE76': 3}]}}
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': 'same-gray', **values}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertLess(result['groups'][0]['actual']['lightnessSpread'], 5)
+            self.assertEqual(result['status'], 'fail')
+
+    def test_native_pixels_catch_different_composition_and_require_fresh_binding(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            before = Image.new('RGB', (2, 1), (46, 49, 97)); before.save(p / 'source.png')
+            actual = Image.new('RGB', (2, 1), (225, 198, 149)); actual.putpixel((1, 0), (234, 225, 202)); actual.save(p / 'actual.png')
+            rule = {'verifier': {'groups': [{'id': 'tab-body', 'nodeIds': ['icon'],
+                    'xy': [[0, 0], [1, 0]], 'maximumChannelDelta': 1, 'nativePixels': [2, 1]}]}}
+            def samples(name):
+                image = {'path': str(p / name), 'sha256': hashlib.sha256((p / name).read_bytes()).hexdigest()}
+                return [{'image': image, 'xy': point} for point in [[0, 0], [1, 0]]]
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': 'tab-body', 'source': samples('source.png'), 'actual': samples('actual.png')}]}
+            self.assertEqual(execution.verify_displayed_relations(source, source, rule, evidence)['status'], 'fail')
+            actual.putpixel((1, 0), (225, 198, 149)); actual.save(p / 'actual.png')
+            evidence['groups'][0]['actual'] = samples('actual.png')
+            self.assertEqual(execution.verify_displayed_relations(source, source, rule, evidence)['status'], 'pass')
+            evidence['actualHash'] = 'stale'
+            with self.assertRaises(ValueError): execution.verify_displayed_relations(source, source, rule, evidence)
+
+    def test_continuity_compares_all_points_not_only_the_first_point(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / 'sample.png'
+            image = Image.new('RGB', (3, 1)); image.putdata([(100, 100, 100), (101, 100, 100), (99, 100, 100)]); image.save(p)
+            ref = {'path': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+            points = [[0, 0], [1, 0], [2, 0]]
+            values = [{'image': ref, 'xy': point} for point in points]
+            rule = {'verifier': {'groups': [{'id': 'joined', 'nodeIds': ['icon'], 'xy': points,
+                                            'nativePixels': [3, 1], 'maximumChannelDelta': 1}]}}
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': 'joined', 'source': values, 'actual': values}]}
+            self.assertEqual(execution.verify_displayed_relations(source, source, rule, evidence)['status'], 'fail')
+
+
+class InteractionRequirementsChecks(unittest.TestCase):
+    def fixture(self):
+        source = snapshot(); plan = manifest(source)
+        plan['entries'][0]['role'] = 'button.material'
+        plan['entries'][1]['role'] = 'cta.base'
+        plan['entries'][2]['role'] = 'cta.material'
+        anchor = {'r': .5, 'g': .6, 'b': .7}
+        plan['schemeAnchorContract'] = {'button': anchor}
+        for index in (0, 1):
+            plan['entries'][index]['disposition'] = 'change'
+            plan['entries'][index]['recipeId'] = 'button-primary'
+            plan['entries'][index]['sceneId'] = 'buttons'
+            plan['entries'][index]['anchorId'] = 'button'
+            plan['entries'][index]['target'] = anchor
+        return source, plan
+
+    def test_tab_only_visual_scope_and_missing_numeric_relation_fail(self):
+        source, plan = self.fixture()
+        rules = {'control-family-consistency': {'kind': 'visual', 'applicable': True, 'scopeNodeIds': []}}
+        result = execution.interaction_requirements(source, plan, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('omitted' in e['error'] for e in result['errors']))
+        self.assertTrue(any('mandatory' in e['error'] for e in result['errors']))
+
+    def test_separate_button_and_cta_groups_cannot_self_certify(self):
+        source, plan = self.fixture()
+        paths = [e['path'] for e in plan['entries']]
+        rules = {'control-family-consistency': {'kind': 'visual', 'applicable': True, 'scopeNodeIds': ['page']},
+                 'button-appearance-family': {'kind': 'machine', 'applicable': True,
+                    'verifier': {'type': 'displayed-relations', 'groups': [
+                        {'relationType': 'appearance-family', 'carrierPaths': [paths[0]]},
+                        {'relationType': 'appearance-family', 'carrierPaths': paths[1:]}]}}}
+        self.assertEqual(execution.interaction_requirements(source, plan, rules)['status'], 'fail')
+        rules['button-appearance-family']['verifier']['groups'] = [
+            {'relationType': 'appearance-family', 'carrierPaths': paths, 'nodeIds': ['page']}]
+        self.assertEqual(execution.interaction_requirements(source, plan, rules)['status'], 'pass')
+        rules['control-family-consistency']['applicable'] = False
+        self.assertEqual(execution.interaction_requirements(source, plan, rules)['status'], 'fail')
+        rules['control-family-consistency']['applicable'] = True
+        rules['button-appearance-family']['verifier']['groups'][0]['carrierPaths'].pop()
+        self.assertEqual(execution.interaction_requirements(source, plan, rules)['status'], 'fail')
+
+    def test_split_button_anchor_or_missing_cta_anchor_fails(self):
+        source, plan = self.fixture()
+        paths = [e['path'] for e in plan['entries']]
+        rules = {'control-family-consistency': {'kind': 'visual', 'applicable': True,
+                                                'scopeNodeIds': ['page']},
+                 'button-appearance-family': {'kind': 'machine', 'applicable': True,
+                    'verifier': {'type': 'displayed-relations', 'groups': [
+                        {'relationType': 'appearance-family', 'carrierPaths': paths,
+                         'nodeIds': ['page']}]}}}
+        plan['entries'][1]['target'] = {'r': .9, 'g': .6, 'b': .1}
+        result = execution.interaction_requirements(source, plan, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('differs' in e['error'] for e in result['errors']))
+        plan['entries'][1]['target'] = plan['schemeAnchorContract']['button']
+        plan['entries'][1].pop('anchorId')
+        result = execution.interaction_requirements(source, plan, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('anchor channels' in e['error'] for e in result['errors']))
+
+
+class SchemeAnchorRequirementsChecks(unittest.TestCase):
+    def fixture(self):
+        plan = manifest(snapshot())
+        names = ('background', 'card', 'number', 'icon', 'button', 'tab')
+        plan['schemeAnchorContract'] = {}
+        entries = []
+        for index, name in enumerate(names):
+            value = {'r': (index + 1) / 10, 'g': .5, 'b': .9}
+            plan['schemeAnchorContract'][name] = value
+            entry = copy.deepcopy(plan['entries'][0])
+            entry.update(anchorId=name, disposition='change', target=value,
+                         recipeId='anchor-' + name, sceneId='anchors')
+            entries.append(entry)
+        plan['entries'] = entries
+        return plan
+
+    def test_all_six_exact_anchor_targets_pass(self):
+        result = execution.scheme_anchor_requirements(self.fixture())
+        self.assertEqual(result['status'], 'pass')
+
+    def test_tab_cannot_drift_to_button_or_disappear(self):
+        plan = self.fixture()
+        tab = next(e for e in plan['entries'] if e['anchorId'] == 'tab')
+        tab['target'] = plan['schemeAnchorContract']['button']
+        result = execution.scheme_anchor_requirements(plan)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any(e.get('anchorId') == 'tab' for e in result['errors']))
+        plan = self.fixture()
+        plan['entries'] = [e for e in plan['entries'] if e['anchorId'] != 'tab']
+        self.assertEqual(execution.scheme_anchor_requirements(plan)['status'], 'fail')
+
+
 class CoverageChecks(unittest.TestCase):
     def test_vector_region_gradient_stop_is_not_silently_missed(self):
         source = snapshot(); plan = manifest(source)
@@ -36,13 +246,23 @@ class CoverageChecks(unittest.TestCase):
         self.assertEqual(result['status'], 'fail')
         self.assertIn('gradientStops/1/color', result['missingPaths'][0])
 
-    def test_visible_channel_cannot_be_ignored_and_inactive_can(self):
+    def test_transparent_stop_of_active_gradient_cannot_be_ignored(self):
         source = snapshot(); plan = manifest(source)
         plan['entries'][0]['disposition'] = 'ignore'
         self.assertEqual(execution.coverage(source, plan)['status'], 'fail')
         plan['entries'][0]['disposition'] = 'preserve'
         plan['entries'][1]['disposition'] = 'ignore'
-        self.assertEqual(execution.coverage(source, plan)['status'], 'pass')
+        self.assertEqual(execution.coverage(source, plan)['status'], 'fail')
+        self.assertFalse(execution.color_inventory(source)['entries'][1]['inactive'])
+
+    def test_hidden_or_fully_transparent_gradient_remains_inactive(self):
+        for mode in ('hidden', 'all-transparent'):
+            source = snapshot()
+            gradient = source['nodes'][1]['props']['vectorNetwork']['regions'][0]['fills'][0]
+            if mode == 'hidden': gradient['visible'] = False
+            else: gradient['gradientStops'][1]['color']['a'] = 0
+            plan = manifest(source); plan['entries'][1]['disposition'] = 'ignore'
+            self.assertEqual(execution.coverage(source, plan)['status'], 'pass')
 
     def test_changed_source_duplicate_and_missing_semantics_rejected(self):
         source = snapshot(); plan = manifest(source)
@@ -144,6 +364,24 @@ class CoverageChecks(unittest.TestCase):
             result = execution.finalize(spec)
             self.assertEqual(result['status'], 'fail')
             self.assertTrue(result['missingVisualRules'])
+            # Finalize must use the frozen contextual policy and still require visual gates.
+            verifier = next(r for r in ledger['rules'] if r['id'] == 'contrast-baseline')['verifier']
+            context = {'sourceUiMode': 'dark', 'targetUiMode': 'light', 'adaptationMode': 'color-only',
+                       'reason': 'Pale host requires a contextual role comparison.'}
+            verifier.update(policy='contextual', decisionContext=context)
+            samples.update(policy='contextual', decisionContext=context)
+            plan['ruleLedgerHash'] = audit.digest(ledger)
+            for key, value in [('ruleLedger', ledger), ('contrastSamples', samples), ('manifest', plan)]:
+                audit.save_json(spec[key], value)
+            contextual = execution.finalize(spec)
+            self.assertEqual(contextual['machineChecks']['contrast-baseline']['policy'], 'contextual')
+            self.assertEqual(contextual['machineChecks']['contrast-baseline']['samples'][0]['status'], 'measured')
+            self.assertEqual(contextual['status'], 'fail')
+            for value in (verifier, samples):
+                value.pop('policy'); value.pop('decisionContext')
+            plan['ruleLedgerHash'] = audit.digest(ledger)
+            for key, value in [('ruleLedger', ledger), ('contrastSamples', samples), ('manifest', plan)]:
+                audit.save_json(spec[key], value)
             from PIL import Image
             image = p / 'scene.png'; Image.new('RGB', (10, 10), 'white').save(image)
             scene_spec = {'sceneId': 'whole-page', 'reviewScope': 'whole-page', 'dependencyNodeIds': ['page'],

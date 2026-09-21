@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline, fail-closed checks for KV theme adaptation. Never writes to Figma."""
 import argparse
+import colorsys
 import hashlib
 import json
 import math
@@ -235,7 +236,29 @@ def color_relations(before, after, spec, mapping=None):
             return target_equal(a, b)
         source_same = all(same_rgb(original[0], v) for v in original[1:])
         target_same = all(same_rgb(actual[0], v) for v in actual[1:])
-        results.append({"id": name, "status": "pass" if source_same and target_same else "fail",
+        relation_type = group.get('relationType', 'source-equivalence')
+        extra = {}
+        if relation_type == 'source-equivalence':
+            passed = source_same and target_same
+        elif relation_type in ('target-shared', 'hue-family'):
+            if not isinstance(group.get('basis'), str) or not group['basis'].strip():
+                raise ValueError('derived relation needs a predeclared user/source basis')
+            if relation_type == 'target-shared':
+                passed = target_same
+            else:
+                limit = group.get('maximumHueDistanceDegrees')
+                if type(limit) not in (int, float) or not math.isfinite(limit) or not 0 <= limit <= 180:
+                    raise ValueError('hue family needs a finite, scene-specific angular tolerance')
+                hsv = [colorsys.rgb_to_hsv(*(v[k] for k in 'rgb')) for v in actual]
+                # Neutral bodies have no dependable hue; highlights belong in separate slots.
+                chromatic = all(s > 1e-6 and v > 1e-6 for _, s, v in hsv)
+                distance = max(min(abs(h - hsv[0][0]), 1 - abs(h - hsv[0][0])) * 360 for h, _, _ in hsv)
+                passed = chromatic and distance <= limit + 1e-9
+                extra = {'maximumHueDistanceDegrees': distance, 'allowedHueDistanceDegrees': limit,
+                         'chromaticBodies': chromatic}
+        else:
+            raise ValueError('unknown color relation type: ' + str(relation_type))
+        results.append({"id": name, "status": "pass" if passed else "fail", 'relationType': relation_type, **extra,
                         "sourceEquivalent": source_same, "targetEquivalent": target_same,
                         "comparison": comparison,
                         "maxTargetChannelDelta": max(abs(v[k] - actual[0][k]) for v in actual for k in "rgb"),
