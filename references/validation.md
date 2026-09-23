@@ -252,7 +252,9 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 - `targetUiMode=light` 的无彩暗层审计已覆盖 `#000000`、近黑灰、低明度中性色、暗色 Effect、低明度渐变端点与主题装饰 IMAGE，并区分结构蒙版/Boolean 几何和真实输出。卡顶氛围不得出现大片黑灰、深纹理或只因 Alpha 低而放行；Icon/按钮的主体、中间调与大面积塑形暗部也不得形成低明度脏块。
 - 既有 SOLID 模糊光斑、GRADIENT、位图/滤镜、反射、底色羽化层都已分类；没有氛围的卡不凭想象新增氛围。ALPHA 蒙版灰色与 Boolean 操作数未误判为灰色表面，结构蒙版未改动。
 - 多层在同一区域重叠后仍保持干净光色，不能凭单层饱和度、低 Alpha 或两种相邻 Hue 直接通过；核对最终主体/受光区、向稳定底色消隐及邻近按钮关系，不能只有一个鲜亮像素或一条亮边。
+- 原稿卡顶若由两个或多个可见氛围圆/光斑/层共同形成，逐成员核对 `materialRelationPlan`：同属 `cardAtmospherePalette` 只要求同家族，不要求同 RGB；原有冷暖、色相、彩度、明度或空间受光差异不得被压成一个颜色。计划快照、代表读回和最终读回的 `scripts/material_relation_audit.py` 均通过，且 1:1 下各层仍承担可解释的不同光照职责。
 - 普通卡片标题默认使用 `textBaseColor`，通过原字号、字重和位置建立层级；仅登记了原稿强调或明确业务/主题证据时才使用 `titleAccent`。标题是稳定纯色或窄差渐变，只在边角有小范围受光，不与氛围、Icon、按钮共享大渐变，也不机械复用 `dataAccent` 或金色按钮。
+- 标题若原有多个可见 Fill、文字区间、渐变色标、Stroke 或颜色 Effect，`textBaseColor/titleAccent` 只绑定稳定代表 Paint；其余成员按 `materialRelationPlan` 保留克制但可感知的职责差异。所有标题通道变成同一 RGB，即使 Gradient 类型、色标数和位置未变也直接 FAIL。
 - 卡片顶部包边、角饰、标题装饰线和顶部光带引用表面/`cardAtmospherePalette` 家族，未机械复用 `dataAccent`、Icon 或 `buttonPrimary`。重复卡顶出现黄色/金色边圈而无原稿业务强调与新主题证据时直接 FAIL。
 - 深色方向性描边只用于规则允许的角色和转换，方向与 KV 光源一致；重复普通卡和内部异形层没有机械白框。
 - 原稿已有金属/玻璃层次没有因换肤被压平；材质没有机械指定色相。

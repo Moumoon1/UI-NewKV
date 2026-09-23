@@ -197,6 +197,8 @@ Icon 底托按图形↔底托↔卡片的成组关系选择。浅色 UI 中底�
 
 `cardAtmospherePalette` 与 `interactionPalette` 分开。卡片氛围只来自新 KV 大面积环境色及其邻近色；禁止从标题、人物、箭头、Logo、金属包边、按钮色和局部镜面反光取色。
 
+同一卡顶原有两个或多个可见氛围圆、光斑、渐变层时，它们共同组成一个视觉关系组，不是若干独立“旧色桶”。`cardAtmospherePalette` 约束家族，不要求同 Hex：逐层保留原来的冷暖、色相、彩度、明度或空间受光分工，至少维持可感知 RGB 差异。两个原本不同的圆不能都写成同一浅主题色；同一家族应表现为有联系但可分辨的邻近色。Phase 3 将这些跨节点成员写入 `materialRelationPlan`，目标快照和实际读回均以 `scripts/material_relation_audit.py` 阻止关系塌缩。
+
 普通卡顶部/标题区、收益复合卡底部是可复用载体支持时的默认氛围锚点，不是搬动原有图层的指令。已有不同空间家族时按既有几何与 KV 光照组织配色并记录理由；同模式保持原空间配方。标题文字和氛围层是两个角色：普通卡片标题默认使用 `textBaseColor`，通过原字号、字重和位置建立层级；只有原稿已有独立标题强调或存在明确业务/主题证据时才登记 `titleAccent`。标题即使使用强调色，也只能是稳定纯色或视觉近似纯色的窄差渐变，只允许边角小范围高光；不得横跨标题使用大幅多色扫光，也不得因为按钮、数字或 KV 金属为金色就自动把标题改成金色。
 
 卡片顶部包边、角饰、标题装饰线、顶部光带及其他卡片 Chrome 与标题文字仍是不同角色，但都默认归入表面/氛围家族：这些装饰从背景、卡片和 `cardAtmospherePalette` 的邻近环境色派生，不继承 `dataAccent`、Icon 或 `buttonPrimary`。只有原稿已有明确业务强调且新主题仍有对应证据时才登记小范围例外；不得因页面选择金色按钮或数字，把重复卡片顶部统一刷成黄色/金色边圈。
@@ -240,6 +242,7 @@ Icon 底托按图形↔底托↔卡片的成组关系选择。浅色 UI 中底�
 - 同级任务文字、认证/状态文字和 KV 衔接文字使用相同普通文字角色，不因组件来源产生任意颜色。
 - 按钮、链接和真实语义状态文字独立处理；`protected-media-overlay` 与 `protected-rank-top3` 中的文字保持原稿 Paint，不套用新文字阶梯。
 - 普通卡片标题默认使用 `textBaseColor`，以原字号、字重和位置区分正文；只有原稿已有独立强调或存在明确业务/主题证据时才使用 `titleAccent`。关键收益/核心数字使用 `dataAccent`。`titleAccent` 与 `dataAccent` 均不得机械互用，按钮/Icon/金属色也不会自动授权标题跟色。
+- `textBaseColor` / `titleAccent` 只绑定标题的稳定代表 Paint，不是标题所有 Fill、局部文字区间、渐变色标、Stroke 和颜色 Effect 的颜色桶。标题原有多层受光、窄差渐变或边角高光时，在 `titlePaintInventory` 内建立 `materialRelationPlan`，保留稳定主体与高光/边缘之间可感知但克制的差异；把所有标题通道写成同一 RGB 即使结构仍为 Gradient 也失败。原稿标题本来是单一纯色时不为凑层次新增颜色。
 
 ### 6.1 强调数字：跨 KV 的独立规则
 
@@ -388,6 +391,7 @@ surfacePalette / cardAtmospherePalette / surfaceFamilyPlan（角色→KV 锚点�
 colorClarityPlan
 colorClarityPlan.hsbGuardrails / darkUiSmallButtonSummary / darkUiLargeButtonSummary / lightUiSmallButtonSummary / lightUiLargeButtonSummary / iconSummary
 schemeAnchorConformancePlan（六色 anchorId、精确目标 RGB、代表试色后读回与最终读回）
+materialRelationPlan（渐变、标题多层 Paint、卡顶多氛围层、Icon/按钮材质的成员路径、职责、保差轴、目标配方与例外理由）
 disabledButtonOpacityOverrides / labelRecipe（存在对应角色时）
 controlColorSalienceOrder: icon-container < selected-tab < primary-button
 textBaseColor / textRamp / textRampOverrides / textBaseColorOverrides
@@ -400,4 +404,4 @@ representativeNodeRoles
 preflightThemeDecision=pass
 ```
 
-缺少任何现有角色、显著性顺序、有依据的完整方案评估及必要比较、六色 `schemeAnchorContract`、六个锚点的精确 `anchorId` 目标、按钮文字组合、逐角色 Paint Recipe 或背景/卡片/主要操作的色相关系计划时，Phase 3 不得通过。无金属撞色必须记录可靠 `surfaceContrastBasis`、对向候选与 KV 鲜明候选的比较、`contrastDerivation=hue-opposition|kv-vivid-accent` 以及可见色相分离；有可靠金属证据时必须记录 `metalAccentEvidence`，并在用户未限制方向时完整提供 `metallic-analogous / gold-bright / clean-deep` 三案。正常明亮金色若暗沉、偏铜棕、只靠高光呈金色，或未以深棕字作为默认文字方向验证，即 FAIL。功能 Icon 图形未引用或有依据地派生自 `icon`、主要小按钮与 CTA 未共同引用 `button`、Tab 未精确引用 `tab`，或真实合成后未满足 `icon-container < selected-tab < primary-button` 且无预先登记的业务例外时同样不得通过。候选仅一套且依据充分不算缺少比较，但不能据此绕过金属三案契约。
+缺少任何现有角色、显著性顺序、有依据的完整方案评估及必要比较、六色 `schemeAnchorContract`、六个锚点的精确 `anchorId` 目标、按钮文字组合、逐角色 Paint Recipe、适用的 `materialRelationPlan` 或背景/卡片/主要操作的色相关系计划时，Phase 3 不得通过。对计划目标快照执行 `scripts/material_relation_audit.py`；任何未获预登记例外的关系塌缩都使 Phase 3 失败，禁止写入代表节点。无金属撞色必须记录可靠 `surfaceContrastBasis`、对向候选与 KV 鲜明候选的比较、`contrastDerivation=hue-opposition|kv-vivid-accent` 以及可见色相分离；有可靠金属证据时必须记录 `metalAccentEvidence`，并在用户未限制方向时完整提供 `metallic-analogous / gold-bright / clean-deep` 三案。正常明亮金色若暗沉、偏铜棕、只靠高光呈金色，或未以深棕字作为默认文字方向验证，即 FAIL。功能 Icon 图形未引用或有依据地派生自 `icon`、主要小按钮与 CTA 未共同引用 `button`、Tab 未精确引用 `tab`，或真实合成后未满足 `icon-container < selected-tab < primary-button` 且无预先登记的业务例外时同样不得通过。候选仅一套且依据充分不算缺少比较，但不能据此绕过金属三案契约。

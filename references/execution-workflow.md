@@ -42,7 +42,7 @@ Phase 0 读取第 3–5 节以初始化执行记录，Phase 3–6 读取第 1–
 
 所有局部修正与首次执行共用第 4.8 节的视觉单元登记表、冻结同色组、对比关系和状态强弱顺序。改动前用 `impact` 算受影响闭包，追加门禁失效事件；改动后读回完整单元及相关宿主并重新取图。影响清单包含只读/保护成员，不表示它们都要改色。不得为局部修正另建缩水验收，或把修正批次的属性完成报告当作控件通过。
 
-扩展仍按明确角色映射写入，执行单位改为**一张卡片或一个完整视觉区域**，不是跨全页的“先所有底色、再所有文字、再所有按钮”。区域包括视觉上归属该卡片、但在 Frame 子树外的叠层/兄弟节点；Hero、页级 CTA、独立 Banner 和其他非卡片区域也须有归属，不能漏掉。每个区域内按背景/表面→材质→文字/Icon→操作状态完成全部计划写入，再一次性取 1:1 图审查，不把半成品判为失败。每个技术批次仍立即读回属性；发现结构或保护错误立即处理。当前区域未通过读回、残色预筛和真实视觉检查前，不切换到下一区域。一次截图可供该区域多项检查复用，最终逐实例覆盖记录不能省略。
+扩展按冻结的家族配方与明确实例映射写入，区域仍是写入归属和恢复单位。每区包含视觉上归属的外置叠层，组合完成后取上下文截图；每批立即读回。机器检查正常后允许继续独立区域，区域保持 reviewing，集中视觉审查后才记 pass。结构、保护、读回冲突或未解释残色先处理；已知视觉失败使相应家族/依赖失效，不继续扩展。具体调度见第 5.0 节。
 
 ## 3. 中断恢复与证据持久化
 
@@ -227,13 +227,35 @@ python3 scripts/execution_audit.py impact source-before.json color-manifest.json
 
 原稿分析及登记表在原稿未变化时复用；新发现的漏层须先补完整成员/依赖，再更新冻结规则并使关联门禁失效。修改配方先跑计划快照的同色、对比/顺序检查，通过后按既有阶段写入，实际读回后重算并看源/新 1:1 彩色与灰度完整对照。机器只能证明登记完整与已声明关系成立，无法证明人工没有把内层归错单元或虚写视觉通过；实际连续区域追踪与对照不可省。
 
+每个含两个及以上可见颜色职责的视觉单元还须建立一份 `materialRelationPlan`，成员使用源节点命名空间的 `sourceId` 与相对 `props` 的 JSON Pointer，例如 `/fills/0/gradientStops/1/color`；跨节点的卡顶氛围圆、标题主体/高光、Icon/按钮材质层同样登记。`preserve` 仅声明需要保留的 `rgb/saturation/value` 轴，`preserveOrder` 可声明饱和度/明度职责顺序；同家族不等于同 RGB。计划目标快照、代表读回和最终读回运行：
+
+```sh
+python3 scripts/material_relation_audit.py source-before.json target.json node-map.json material-relations.json --out material-relation-audit.json
+```
+
+`allowFlatten` 默认为 `false`；只有写入前已有具体 `allowFlattenReason` 才可作为显式例外，并仍需原生 1:1 视觉证据。脚本 PASS 只证明已登记关系没有被压平，不替代材质、氛围或标题的视觉验收。
+
 ## 5. 执行覆盖、严格验收与性能
+
+### 5.0 统一规划、连续执行、集中审查
+
+本节统一流程调度，第 5.4 节负责传输和批处理工具。阶段表示证据依赖，不要求重复生成同一份数据。
+
+1. **一次分类，按家族决策。** Phase 1W 从完整快照建立颜色通道总表，以源节点＋属性路径为唯一键，登记角色、区域、家族、材质职责、状态、宿主和保护类别。标题/Icon 清单、区域写集及审查范围引用或派生总表，不分别人工维护相同成员。家族等价性依据真实结构、材质、状态和宿主，不按旧 RGB 或卡片名称合并；不确定项定向补读。
+2. **一份配方，多实例引用。** Phase 3 在现有 themeDecision 中按 recipeId 与版本/指纹维护家族配方，各实例补具体通道映射与必要变体。选覆盖角色最完整的真实场景试色，非等价材质、宿主或状态补充代表。代表通过后，等价实例直接执行，不逐卡重新设计；结果仍逐实例核对。
+3. **一份权威计划，阶段使用切片。** mutationPlan 维护操作、配方引用、区域归属、代表范围和执行状态。试色、扩展、修正从同一计划派生，区域文件仅作执行视图。保留版本及实际写入历史用于恢复，但不让 trial/final/correction 多份文件同时充当最新真值。修正只更新受影响配方和操作；按新鲜读回跳过已达目标项，不能把冲突值直接改为 before。
+4. **集中完成结构准备。** Phase 4 先完成已知 KV 适配、必要实例解绑和无损颜色绑定解除，再建立完整映射与副本基线。后续纯色值写入复用映射；新发现必须改结构时暂停相关执行并更新映射、门禁，避免边扩展边零散解绑。
+5. **代表通过后连续执行。** 全局共享背景先完成；其余区域按依赖分组。写集无重叠、不会修改彼此的宿主/祖先依赖且代表配方有效时，可连续执行。每批立即读回并检查保护；未知残色、写入冲突、保护异常先处理。机器正常的区域等待集中视觉审查，可继续独立区域；首次代表试色仍必须先经真实视觉通过。
+6. **集中收集问题，按原因修复。** 执行组完成后集中查看整页与足够清晰的局部图，逐实例登记结论。先整理本轮已见问题，再按共同配方、错误映射和单实例差异分类修复，重验受影响闭包。结构/保护错误立即处理，不等待清单收齐；问题未解决时没有轮次豁免。不能以代表 PASS 推导全部实例视觉 PASS。
+7. **最终审计复用有效证据。** 最终新鲜全树状态重算结构、保护、覆盖与目标达成，另验跨区关系及全页累计效果。局部证据只在配方、映射和全部视觉依赖未变化时复用，否则定向重取图。集中审阅不减少检查对象，不以低分辨率整页图代替细节。
+
+重复转换、分区和切批优先调用现有通用工具；任务级程序仅用于现有工具确实无法表达的转换，并记录缺口。节点 ID、目标色和角色映射放在运行数据中。需要持续复用的缺失能力应完善现有入口并验证；不得声称尚未实现的固定生成器已经可用，也不默认每次复制一套任务专用 build_manifest/build_region_plans 程序。
 
 ### 5.1 先把适用规则落到对象
 
 在 `themeDecision.ruleLedger` 登记本次适用规则：`{schemaVersion:1,rules:[{id,kind,applicable,source,acceptance,scopeNodeIds}]}`。source 指向用户要求或维护的规则章节；acceptance 写明可观察的通过条件。`scopeNodeIds` 使用源 ID，覆盖该视觉规则涉及的全部实际实例；最终映射到副本。机器规则不必提供该字段。不适用项仍保留，附 `notApplicableEvidence`；不以名称不熟、嵌套深或旧色不明显作为不适用依据。
 
-基线机器规则 ID：`source-unchanged/clone-allowed-differences/color-coverage/plan-complete/contrast-baseline/color-relations/visual-unit-coverage/color-bindings-clear`，全部必验。基线视觉规则 ID：`kv-fit/theme-consistency/clarity/hierarchy/button-salience/cta-salience/icon-clarity/readability/material-layers/surface-discernibility/state-discernibility/control-family-consistency`；存在对应角色就必验，KV、整页颜色/清晰度/层级/可读性不能跳过。同族控件跨区域出现时，`control-family-consistency` 的 scope 覆盖全部相关控件根；不存在可比较的同族实例才可附读取证据标不适用。其他用户规则用独立 ID 加入，例如浅→浅保留色标 S/V、保护区域、指定模式、数据强调。相互冲突时先按用户最新明确要求确定本次有效条件，不能并列执行互斥旧规则；确定性项目接入真实校验器，不手写一个机器 PASS。
+基线机器规则 ID：`source-unchanged/clone-allowed-differences/color-coverage/plan-complete/contrast-baseline/color-relations/material-relations/visual-unit-coverage/color-bindings-clear`，全部必验。`material-relations` 的 verifier 引用冻结的 `materialRelationPlan`、源/目标快照和节点映射；不存在多色视觉单元时须以全量通道清单给出不适用证据，不能省略规则。基线视觉规则 ID：`kv-fit/theme-consistency/clarity/hierarchy/button-salience/cta-salience/icon-clarity/readability/material-layers/surface-discernibility/state-discernibility/control-family-consistency`；存在对应角色就必验，KV、整页颜色/清晰度/层级/可读性不能跳过。同族控件跨区域出现时，`control-family-consistency` 的 scope 覆盖全部相关控件根；不存在可比较的同族实例才可附读取证据标不适用。其他用户规则用独立 ID 加入，例如浅→浅保留色标 S/V、保护区域、指定模式、数据强调。相互冲突时先按用户最新明确要求确定本次有效条件，不能并列执行互斥旧规则；确定性项目接入真实校验器，不手写一个机器 PASS。
 
 Phase 3 写入前冻结清单哈希；清单变更使关联门禁失效。规则位置不重复搬进 ledger，仅记录适用范围和验收条件。脚本不能自动判断是否完整提取了自然语言规则，必须对照本次用户要求和适用参考章节逐项核对；也不能以脚本支持的字段为由缩减设计规则。
 
@@ -255,7 +277,7 @@ python3 scripts/execution_audit.py complete source-before.json clone-now.json co
 python3 scripts/execution_audit.py finalize finalization-spec.json --out release-check.json
 ```
 
-spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/policy/nodeMap/ruleLedger` 的 JSON 路径和 `visualScenes:[{spec,gate}]`，必须同时引用 `colorRelations/contrastSamples/visualUnits`。finalize 先从全量源通道核对主要按钮/CTA 联合验收范围及必需的主体明度/色差关系，再逐项重算冻结同色关系、原稿与新稿合成对比度及可比较的强调顺序，并验证完整视觉单元的通道覆盖及新鲜上下文检查；缺证据、任一样本/关系失败均不放行。至少包含一个 `reviewScope:"whole-page"` 的最终整页场景，依赖种子为最终根，`hierarchy` 覆盖根并有整页截图，不能只凭局部 PASS 放行。finalize 同时重算原稿不变、差异许可、全量覆盖和目标完成；核对每个视觉场景、规则哈希及全部 scopeNodeIds。旧执行记录缺少新增规则或登记表时不能直接沿用旧 PASS，须补建原稿证据、冻结新规则并完成相关复验，历史记录保留。其他机器规则使用 `verifier`：`{type:"preserve-values",paths:[源属性路径]}` 精确保留；`{type:"preserve-hsv",paths:[源 RGB 对象路径],channels:["s","v","a"]}` 核对指定源通道；`{type:"target-values",targets:[{path,expected}]}` 核对声明目标。可比较的数值只容许已定义的浮点读回误差；目标路径使用源 ID 的规范化比较空间。当前工具未支持的能力应补实际 verifier，不能改为人工声称的机器 PASS。
+spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/policy/nodeMap/ruleLedger` 的 JSON 路径和 `visualScenes:[{spec,gate}]`，必须同时引用 `colorRelations/materialRelations/contrastSamples/visualUnits`。finalize 先从全量源通道核对主要按钮/CTA 联合验收范围及必需的主体明度/色差关系，再逐项重算冻结同色关系、材质颜色关系、原稿与新稿合成对比度及可比较的强调顺序，并验证完整视觉单元的通道覆盖及新鲜上下文检查；缺证据、任一样本/关系失败均不放行。至少包含一个 `reviewScope:"whole-page"` 的最终整页场景，依赖种子为最终根，`hierarchy` 覆盖根并有整页截图，不能只凭局部 PASS 放行。finalize 同时重算原稿不变、差异许可、全量覆盖和目标完成；核对每个视觉场景、规则哈希及全部 scopeNodeIds。旧执行记录缺少新增规则或登记表时不能直接沿用旧 PASS，须补建原稿证据、冻结新规则并完成相关复验，历史记录保留。其他机器规则使用 `verifier`：`{type:"preserve-values",paths:[源属性路径]}` 精确保留；`{type:"preserve-hsv",paths:[源 RGB 对象路径],channels:["s","v","a"]}` 核对指定源通道；`{type:"target-values",targets:[{path,expected}]}` 核对声明目标。可比较的数值只容许已定义的浮点读回误差；目标路径使用源 ID 的规范化比较空间。当前工具未支持的能力应补实际 verifier，不能改为人工声称的机器 PASS。
 
 `control-family-consistency` 还要求至少一个有效场景在同一次比较中覆盖该规则全部冻结 scope，不能由多个各只覆盖一张卡的 PASS 累加通过。可从同一原生全页图裁出并排片段，保留裁切来源/比例，并实际查看相邻与远处同族实例；整页层级检查可共用图像，不额外反复渲染。
 
@@ -274,27 +296,29 @@ spec 是旁文件视图，引用 `sourceBefore/sourceNow/cloneNow/manifest/polic
 
 - 普通换肤复用完整快照、样式/材质分组及真实承载映射，不为每个阶段重新输出整树；原稿首次与最终、副本结构变化后和最终需完整核对。中间按具体操作与依赖读回，未变快照不再次传输；截断结果不能冒充完整文件。只读分析在依赖独立时合并调用，写入、读回和依赖变化保持顺序。
 - 从全实例清单按实际材质/状态/背景等价关系选最少代表，同组只试一个完整场景。试色接近全页操作量时先检查分组是否过碎；非等价项仍补试，不为省时合并。Phase 2 按《配色方案提案》展示无金属 4/2 套或金属 6/3 套只读色板；用户选定后，真实 Figma 试色只执行这一套完整方案，仅对失败或关键疑点增加局部对照，不把全部候选都写进页面。
-- Phase 6 先按 `regionPlan` 将操作分成各区域的清单；只在**同一区域、同一有效门禁组**内合并原子操作。每区建立 `{schemaVersion:1,regionId,operations,oldUiColors,protectedNodeIds,excludedSubtreeRootIds}`，其中 `excludedSubtreeRootIds` 必须包含全部 `kvLockedSubtreeRootIds`，`operations` 使用已冻结的 `figma_apply_color_diff.js` 精确 diff 格式；卡片视觉单元有外置兄弟叠层时加 `scopeNodeIds` 完整列出扫描范围，需在真实祖先合成下截图时加 `screenshotNodeId`。运行 `scripts/split_region_plan.py <region-plan.json>` 按真实完整代码长度与最多 60 项自动切分，再用 `scripts/generate_figma_region_js.py <part.json>` 生成 `use_figma` 程序。单次装得下时一张卡一次调用；装不下只拆该卡，前面批次仅守卫写入和即时读回，最后一批在同次调用中做紧凑旧色扫描及原生区域截图。不把两张未验收卡片混入一批，不把 Phase 5 与 Phase 6 合并，不把 detach/clone 混入颜色批次。返回 `visual-review` 不是区域 PASS：仍需查看 1:1 图、材质、保护、文字与跨区依赖；`old-color-review` 必须逐项解释或修正，`needs-recovery` 必须先读回已写项再恢复。若单批真实执行过慢、超时或接近上限，再依据测量拆分并先读回，不盲目重发。
+- Phase 6 先按 `regionPlan` 将操作分成各区域的清单；区域内部仍只合并同一有效门禁组的原子操作。每区建立 `{schemaVersion:1,regionId,operations,oldUiColors,protectedNodeIds,excludedSubtreeRootIds}`，其中 `excludedSubtreeRootIds` 必须包含全部 `kvLockedSubtreeRootIds`，`operations` 使用已冻结的 `figma_apply_color_diff.js` 精确 diff 格式；卡片视觉单元有外置兄弟叠层时加 `scopeNodeIds`，需在真实祖先合成下截图时加 `screenshotNodeId`。运行 `scripts/split_region_plan.py <region-plan.json>` 按真实完整代码长度与最多 60 项自动切分，再用 `scripts/generate_figma_region_js.py <part.json>` 生成单区程序。代表场景已通过后，若两个及以上区域写集不重叠、没有会被前区写入改变的共享依赖、配方/依赖指纹已冻结且合并代码小于 45,000 字符，可为每区登记 `batchEligibility={representativeGateStatus:"pass",independent:true,recipeHash,dependencyHash}`，再用 `scripts/generate_figma_region_batch_js.py region-a.json region-b.json ...` 生成一次受保护的多区调用。批处理仍逐区执行写入、完整属性读回、旧色预筛和截图；任一区返回非 `visual-review` 立即停止，未执行后区保持 pending。批处理只减少工具往返，不合并区域验收、截图结论或 PASS。Phase 5 与 Phase 6、detach/clone 与颜色批次仍不得合并。若区域不独立、代码超限、单批实测过慢或接近上限，回到单区路径；不得为凑批量删减检查。
 - 完整快照的**校验**不等于重复传输完整快照。已有本地冻结模板时，先用 `scripts/generate_figma_snapshot_verify_js.py --compact <snapshot>` 在 Figma 内完整遍历并返回全树指纹、节点数和全部读取错误；不匹配再定向读取差异或做分段传输。副本完成换色后，若已经有 KV/解绑后的完整副本基线及全部精确区域操作，用 `scripts/project_clone_snapshot.py <clone-baseline.json> <region-plan-1.json> ... --out <expected-clone.json>` 推导目标；仅在投影支持全部差异且经过一张新鲜全树 Figma 指纹证明时，才能以该模板进入本地最终审计。投影失败、指纹不符、存在未建模的 Figma 侧效应或特殊属性时，不能伪造模板，改传完整副本快照定位差异。副本最终审计仍须完成结构/保护、全量目标、材质/文字和真实渲染门禁；紧凑指纹只省传输，不替代视觉检查。任何紧凑证明都不能跳过节点、隐藏实例子层、原稿差异或已批准读取异常的单独披露。
 
-- 大树传输先核对本次接口预算。本次实测 `use_figma.code` 上限 50,000 字符，返回文本约 20,500 字符会截断；生成器统一留到 45,000，后备文本分片使用至多 17,500 ASCII 字符。操作数预算之外还须检查包含 helper 的实际代码长度。颜色批次复用 `snapshot_fingerprint.js` 与 `figma_apply_color_diff.js`；生成 after 指纹前须把已声明目标 RGB(A) 规范为 Figma 原生 float32，避免 Fill 自动同步 Vector region 后因 double/float32 表达差异误报冲突，实际 before 仍精确保留。只传原子属性的 before/after 指纹和精确颜色差异，在实际节点完整 Paint/Vector 数据副本上应用，不能把差异片段直接覆盖为完整 Paint。每项写入后**同次读取完整属性或文字区间**并核对 after 指纹；变量回弹立即返回冲突，不把“setter 没报错”当成功。Fill 引发的 Vector region 自动同步仅在完整 after 指纹吻合时作为完成项跳过，否则仍为冲突。
+- 大树传输先核对本次接口预算。本次实测 `use_figma.code` 上限 50,000 字符，返回文本约 20,500 字符会截断；生成器统一留到 45,000，后备文本分片使用至多 17,500 ASCII 字符。操作数预算之外还须检查包含 helper 的实际代码长度。颜色批次复用 `snapshot_fingerprint.js` 与 `figma_apply_color_diff.js`；生成 after 指纹前须把已声明目标 RGB(A) 规范为 Figma 原生 float32，避免 Fill 自动同步 Vector region 后因 double/float32 表达差异误报冲突，实际 before 仍精确保留。默认只传颜色叶子路径的原子 diff；Paint 类型、数量、顺序或渐变拓扑未变时，禁止用 `path:""` 重发完整 Paint 数组。只有结构本身属于已批准变更时才允许完整属性替换并记录原因。每项写入仍携带完整属性 before/after 指纹，在实际节点完整 Paint/Vector 数据副本上应用，不能把差异片段直接覆盖为完整 Paint。每项写入后**同次读取完整属性或文字区间**并核对 after 指纹；变量回弹立即返回冲突，不把“setter 没报错”当成功。Fill 引发的 Vector region 自动同步仅在完整 after 指纹吻合时作为完成项跳过，否则仍为冲突。
 
 - 已有完整基准/精确目标模板时，可复用 `snapshot_fingerprint.js` / `snapshot_fingerprint.py` 减少读回传输：仍执行 `snapshotThemeTree` 全量真实采集，以 ID、父子顺序和全部属性的逐行指纹逐一核对；返回真实采集时间、错误、节点数、模板指纹与差异数。只有所有节点匹配且无错误、无缺失时，才可结合本地模板重建该次读回，并保留 live proof；不能只传声称 PASS，不能忽略差异/截断，不能给未重读的模板换时间戳。指纹是传输校验，不是视觉验收，也不是面向恶意输入的密码学证明。首次无完整基准时使用完整无损传输；`decode_snapshot_transport.py` 拒绝缺片、不一致和解码散列错误。禁止为每个小分片重复采集全树；若运行环境不能保留只读传输缓存，优先改善序列化或批量传输，并记录实际开销。
+- Phase 4 完成全部已计划的 clone/detach/解绑结构操作后，只生成一次完整 `node-map.json` 并冻结源/副本结构指纹；后续纯颜色叶子写入复用该映射，不为每个区域重新按名称或位置建图。只有新增结构操作、节点集合/父子指纹变化或映射校验失败时才重建，并同时使相关门禁失效。这样减少重复全树遍历，但不得在结构已变化时强行沿用旧映射。
 - 一张真实上下文截图可支持多条验收；彩色/灰度/模糊/缩略图由本地派生。完整区域组合完成后取图，不每改一个角色或一小批就远程截图。可从足够分辨率、包含真实祖先合成的整页图按真实边界派生局部视图；仅需更细材质或合成证据时追加原尺寸局部截图。原稿衍生图一次生成，未变区域复用；改过的区域必须新证据。
 - 一次新鲜读回可同时重验多个共享场景、覆盖和保护检查，不能为每个检查单独重新取全树。批间任何关联依赖改变均需重验，不能用“已批量检查”掩盖过期状态。派生图与确定性分析在本地完成，只展示失败、统计和路径，避免工具输出占满上下文。
 
 - 场景指纹按 Figma 数值语义规范化 JSON 中等值的 `1/1.0` 和 `0/-0.0`，避免格式差异误报过期；布尔值与数值仍区分，真实数值变化不放宽。`stateHashVersion=2` 闸门沿用真实审查时间和证据，不重写历史时间。升级旧格式门禁时，保留旧文件，仅使用已有完整状态和同一实际 review 重新计算指纹；没有这两份真实证据时重新读取/审查，不能直接把 stale 改成 pass。
-- 在 `mutationPlan.batches` 与阶段事件记录真实 `startedAt/endedAt`、操作/节点/字节数、Figma 只读/写入/截图调用数、临时文件操作数、实际人工审批的工具名与原因、重试原因和结果；未取得弹窗原文时记 `approvalCause=unknown`，不得推定为 Figma、终端或 0 次。区分分析、传输、写入、截图、审阅、修正耗时。从 actual 时间定位瓶颈，不补造耗时；首次基线传输失败一次即走后备路径，同一区域连续两次无改善先诊断而非继续试色。不得为减少审批切换 Full Access、绕过产品权限或把有副作用的调用伪装成只读。下一次与约三卡片页面的对照目标是把先前约 51 次 Figma 调用压到 `10–15 次`、争取 `墙上耗时 <25 分钟`；50,000 字符代码预算可能仍迫使某卡拆批。这些只用于发现瓶颈，不是略过质量门禁或承诺固定时长的理由；未达标须按实测阶段说明原因。没有同规模实测前不承诺固定完成分钟数。
+- 在现有批次记录保存真实起止时间、节点/操作/字节数、调用数、重试原因及实际审批原因，未知值不填 0。区分分析、传输、写入、截图、审阅、修正与用户等待；文件修改时间跨度不代表精确执行耗时。性能参考目标为调用不超过 15 次、20 分钟首次可看副本、30 分钟完成，修正尽量集中一轮；从用户选色确认后计时，用户等待单列，预览注明未最终验收。目标须经实测，不是时间、调用或修正次数上限；超出如实报告并继续必要检查。质量规则独立验收，不计作提速成果。不为提速更改权限或绕过审批。
 
 ```sh
 python3 scripts/split_region_plan.py region-plan.json
 python3 scripts/generate_figma_region_js.py region-plan-part-0.json
+python3 scripts/generate_figma_region_batch_js.py region-a.json region-b.json
 python3 scripts/render_views.py whole-page.png region-views --regions pixel-regions.json
 ```
 
 `pixel-regions.json` 为 `{sceneId:[x,y,width,height]}`，坐标是截图像素，必须从实际设计边界和截图比例换算；包含真实宿主及邻近比较控件，禁止低分辨率放大冒充 1:1。局部视图保存原截图指纹与裁切边界，裁切不代表新 Figma 渲染。
 
-前两条命令只切分/生成待审查代码，不自行调用 Figma 或授予操作权限；`region-plan.json` 中的 `operations` 使用 clone ID、完整属性 before/after 指纹及原子 diff，来源必须是预声明配方。不得把一个 Paint 数组内部的相互依赖写入拆散，重复/重叠操作先合并，单原子操作超限时显式处理，不能静默截断。原 `execution_audit.py batch-plan` 的 `{path,before,after}` 格式仍可用于离线原子变更校验，但不是此处 `use_figma` 区域写入的输入格式。
+前三条命令仅生成待审查执行代码，不调用 Figma 或授予权限。operations 使用 clone ID、完整属性 before/after 指纹及原子 diff，来源是统一计划；相互依赖的 Paint 操作不得拆散，重复/重叠操作先合并，单操作超限不得截断。execution_audit.py batch-plan 的离线格式不直接作为 Figma 区域输入。
 
 ## 6. 阶段产物与通过条件
 
@@ -427,12 +451,12 @@ Phase 1 分为两个只读门禁。Phase 1P 在 Phase 2 前完成，只收集生
 
 只有对应场景门禁通过且新鲜读回确认配方、映射与上下文指纹仍有效，才能将该方案扩展到剩余节点；历史 PASS 本身不够。
 
-先读回 Hero/页面背景等已登记的全局共享通道；未到目标值时按原门禁写入并确认一次，再按 `regionPlan` 的视觉顺序逐区推进。Phase 5 已试色的代表卡片也要在此补齐未写通道，不能把代表场景 PASS 直接当作整卡 PASS。`regionPlan` 的每区状态只按 `pending → writing → reviewing → pass` 更新；失败保持在当前区修复，不把半张卡片标为完成。跨区域共享配方或祖先变化会使已通过的相关区域失效，须返回重验，不能沿用旧截图。
+先完成已登记的全局共享通道，再按第 5.0 节的依赖关系调度区域。代表区域仅补未完成通道，不重复写已达目标项。状态仍为 pending → writing → reviewing → pass：机器检查正常即可进入 reviewing 并继续独立区域，集中视觉通过后才记 pass。共享配方或祖先变化使相关区域失效，更新受影响实例并取新证据。
 
 - 只按 `mutationPlan` 写入，不以坐标、面积、名称或旧色相进行全页猜测。
 - 每次写入按批次保存前值、目标值并读回实际 `mutatedNodeIds`；超时/部分失败按执行工具第 3 节恢复，不盲目重复。解绑后重新映射并使相关门禁失效。
-- 当前区域内完成表面、材质、文字、Icon、状态和操作的计划写入，技术批次只为请求大小/失败恢复而拆，不在批次间切换到另一张卡片。每批属性检查仍立即执行；组合完成后取一次足够分辨率的区域截图复用到多项检查，需诊断细节时才补图。
-- 区域完成前跑紧凑的 Selection colors 等价聚合，与已登记的旧 UI 色及新角色配方比较；给残留通道标注可见贡献、精确保护或内容素材归属。发现可编辑旧色时先补入 `mutationPlan` 的确切节点/通道和配方，再按本阶段门禁修正并复看 1:1 图；聚合结果本身不授权按色值批量写入。读回、保护、覆盖、残色与真实画面均通过，才标记本区 `pass` 并进入下一区。Phase 7 仍对整个副本重做完整 Paint＋渲染残留审计。
+- 每区完成表面、材质、文字、Icon、状态和操作的冻结计划，技术分批依据代码预算和恢复边界，各批立即读回。同组可连续执行多个独立区域，不逐卡重新选色或重建全页计划；组合完成后取得上下文截图，集中审查前确认没有后续依赖变化使其过期。
+- 区域写入后执行紧凑旧色聚合，按保护、素材和可见贡献解释命中。无法解释时暂停相关写入，补入统一计划后修正，不按旧色全局替换。机器读回和预筛正常则进入 reviewing，集中视觉审查后逐区记 pass。Phase 7 仍在最终新鲜状态检查全量 Paint 残留、结构、保护、覆盖及整页渲染；有效局部证据直接引用。
 - 每个按钮和氛围实例都核对实际背景、祖先透明度及状态；材质相同不代表换到另一背景也合格。新发现的非等价配方须先补入代表白名单并单独试色通过，再扩展该组。
 
 #### 通过条件
