@@ -59,7 +59,17 @@ async function snapshotThemeTree(api, rootId) {
       for (const key of fields) {
         if (!(key in node)) continue;
         try { row.props[key] = serial(node[key]); }
-        catch (error) { fail(node.id, key, error); }
+        catch (error) {
+          // A broken upstream component set can make only this metadata getter
+          // throw while the instance's visible tree and paints remain readable.
+          // Keep an explicit marker so source/clone comparisons cannot mistake
+          // an absent value for a successfully read value.
+          if (key === "componentProperties" && String(error).includes("Component set for node has existing errors")) {
+            row.props[key] = { $unavailable: String(error) };
+            result.unavailableFields ??= [];
+            result.unavailableFields.push({ id: node.id, property: key, error: String(error) });
+          } else fail(node.id, key, error);
+        }
       }
       if (node.type === "TEXT") {
         try {

@@ -10,7 +10,7 @@ Phase 1 前完整读取。本文只规定 Figma 节点识别、快照、复制�
 ## 1. 解析目标
 
 - 只接受 `figma.com/design/...`。
-- 优先当前唯一选中的合格顶层 Frame；否则使用 URL `node-id` 指向的唯一合格 Frame。
+- 优先当前唯一选中且经旧 KV/Hero 核实的顶层 Frame；否则使用 URL `node-id` 指向并经核实的顶层 Frame。没有选中画框不是阻塞；当链接指向 `PAGE` 或仅提供文件链接时，只读枚举该页顶层 Frame 的名称、尺寸、层级与旧 KV/Hero 证据，唯一确认原活动页即可继续复制。已有换肤副本不得仅凭名称/位置误认作原稿；多个候选经核查仍不唯一时才请用户指明。
 - 目标父级必须为 `PAGE`。
 - 写入前必须实际读取新 KV，不得根据文件名或描述猜测。
 - 旧 KV 容器和其中承担主视觉的 IMAGE Paint 必须由名称、位置、层级和截图共同确认；多个合理候选时继续只读核查有效可见性、图片和构图，仍不能唯一确定才请求用户指明。
@@ -61,6 +61,8 @@ IMAGE 位于 `protected-marketing-banner` 子树时，优先服从该保护分�
 
 语义角色与绘制节点必须分开。对每个卡片、容器、Tab、标签和按钮遍历完整局部子树及内容同组兄弟节点，检查所有带 Fill、Stroke 或颜色 Effect 的 Rectangle、Vector、Boolean、Ellipse、Frame 等节点。无语义名称不是跳过理由。
 
+卡片标题还须读取 TEXT 本体的每层 Paint、局部文字区间与渐变色标；Icon 要从底托深入到可见图形子树，区分 Vector/Boolean/IMAGE、Fill/Stroke/Effect 和稳定主体层。清单分别标记 `title`、`icon-glyph` 与 `icon-container`，不能以换掉父级卡片或底托代替本体。位图图形或烘焙按钮若不能在保护边界内安全换色，记录素材阻塞；不得叠加新图形、Rectangle 假按钮或新文字来掩盖旧像素。
+
 `visualSurfaceCarrier` 至少由两类证据确认：
 
 - 位于文字/Icon 下方的 Z 顺序。
@@ -90,7 +92,7 @@ surface-stroke / state-indicator / decoration
 
 保护外的榜单标题、外卡片、Tab、按钮、姓名、收益/分数和第四名及之后的普通编号仍按角色换肤。头像等内容图片本身沿用既有内容保护。不得直接跳过整个排行榜或前三名的混合内容组件；受保护形状与普通文字共享父级时，只跳过受保护节点自身的颜色通道，继续检查后代。共享 TEXT/Vector 中同时含保护与非保护内容时，按文字区间/矢量区域建立映射，禁止整节点覆盖造成误改。
 
-建立 `sourceAudit.protectedRankTop3`，并在 `mutationPlan.protectedRankTop3Ids` 和必要的 `protectedRankTop3PaintRanges` 中映射到副本。保护项不进入代表/扩展写色白名单；每次写入前检查重叠。需要修复误改时，只允许按原稿指纹恢复并记录 `protectedColorRestorations`，不得以修复为由改成新主题色。
+建立 `sourceAudit.protectedRankTop3`，并在 `mutationPlan.protectedRankTop3Ids` 和必要的 `protectedRankTop3PaintRanges` 中映射到副本。保护项不进入代表/扩展写色白名单；每次写入前检查重叠。固定色交付时，副本保护项仅允许解除颜色变量/颜色样式引用，保持有效 Paint/Effect 色值与外观不变；将该引用差异单独登记，不能把它当作受保护颜色的换色许可。需要修复误改时，只允许按原稿颜色/材质指纹恢复并记录 `protectedColorRestorations`，不得以修复为由改成新主题色。
 
 完全受保护的节点从写色 ID 集合排除；混合节点则按“节点 ID＋属性/文字区间/Vector region”判断白名单与保护集合的交集，允许写非保护通道，但必须保留保护通道完整指纹。不能因为节点 ID 相同就整组跳过，也不能因为允许改一个区间就覆盖整个节点的 fills。
 
@@ -126,7 +128,7 @@ itemReverseZIndex、实际绘制顺序、蒙版类型及同组作用范围
 
 完整快照一次保存并复用；工具输出可返回分组统计、稳定指纹与差异，原始数据须完整保留可追溯，不反复传输整树制造重复读取。几何指纹和颜色指纹分开：例如 `vectorNetwork.regions[].fills` 是 Paint，不混入几何哈希；顶点、线段、区域拓扑/绕向仍逐项保护。原稿审计仍比较全部字段，不能因副本允许改 Paint 而放松原稿检查。
 
-优先复用[《局部试色与执行工具》](execution-workflow.md)第 4 节的采集与差异脚本，不复制历史任务中的固定 ID 或旧规则。采集错误、缺失字段和不可比映射必须显式处理，不能忽略后记 PASS；中间阶段只读回受影响属性/依赖，原稿及副本最终仍做完整结构核对。
+优先复用[《局部试色与执行工具》](execution-workflow.md)第 4 节的采集与差异脚本，不复制历史任务中的固定 ID 或旧规则。副本颜色解绑的 `fillStyleId/strokeStyleId/effectStyleId`、文字局部颜色样式及颜色 `boundVariables` 路径须逐项列入差异许可；保护项只豁免引用元数据，不豁免显示色、Paint/Effect 结构或材质。采集错误、缺失字段和不可比映射必须显式处理，不能忽略后记 PASS；中间阶段只读回受影响属性/依赖，原稿及副本最终仍做完整结构核对。若 Figma 上游组件集损坏，使某个实例的 `componentProperties` getter 单独报 `Component set for node has existing errors`，采集器可以在该字段留下 `$unavailable`，并在 `unavailableFields` 逐实例披露；其余字段、子树、Paint 和文字必须继续完整采集。此例外只适用于这一条精确错误，不把字段缺失当成成功读取，也不豁免原稿与副本在可读属性上的比较；最终报告受限字段。
 
 ## 5. 任意比例 KV 自动适配与旧资产叠层
 
@@ -169,7 +171,7 @@ contain 分支默认居中；为固定功能控件或接缝做顶部/底部对�
 
 若 KV 位于实例内而本地覆盖不支持必要的几何/增层操作，可按第 9 节先解绑对应副本实例并验证解绑前后视觉一致，再执行下列适配；原稿实例和主组件不变。
 
-若 `sourceVisualUnitType=composite-kv`，优先把完整根节点作为一个单元 clone/reparent 到副本 Hero 的 KV 层，并只对根做统一等比尺度与定位；内部节点不进入普通 KV 适配写入白名单。结构或跨文件限制导致无法可靠保留整组时，先导出完整根节点，再按第 3 项的单一 `kv-main-image` 路径放置；必须保存完整导出与源截图比对证据。以下针对 IMAGE Paint 的路径不得被用来只替换复合 KV 的某个内层图。
+若 `sourceVisualUnitType=composite-kv`，优先把完整根节点作为一个单元 clone/reparent 到副本 Hero 的 KV 层，并只对根做统一等比尺度与定位；内部节点不进入普通 KV 适配写入白名单。放置完成后把根加入 `kvLockedSubtreeRootIds`，采集内部节点顺序、Paint、文字、素材、渐变、相对几何与渲染指纹。后续 UI 颜色解绑、写色、旧色扫描和自动残色修正均不得遍历进入该子树；任何操作目标是其根或后代都须在写入前报错。结构或跨文件限制导致无法可靠保留整组时，先导出完整根节点，再按第 3 项的单一 `kv-main-image` 路径放置；必须保存完整导出与源截图比对证据。以下针对 IMAGE Paint 的路径不得被用来只替换复合 KV 的某个内层图。
 
 1. 若现有载体及其祖先已覆盖安全窗口，优先在指定 IMAGE Paint 上重设适配模式/变换，让主图按当前 fitMode 落入计算边界；保留无关 Paint、混合模式和效果。
 2. 若现有载体仅属于 KV，可调整其 `x/y/width/height` 以匹配计算边界。不得更改作为 Hero 外框或参与页面布局的载体尺寸，不得移动同节点承载的功能 UI。
@@ -201,6 +203,7 @@ imageFit: 单一 s、原设计尺寸、imageX/imageY/imageWidth/imageHeight、�
 carrier: 原/新节点 ID、父级与层级、原/新 Paint 模式和变换
 backdrop: none 或节点/Fill、环境取色证据、配方与边界
 allowedMutations: 逐节点 ID/路径、Paint 索引、允许属性及前后值
+kvLockedSubtreeRootIds / kvLockedSubtreeFingerprint / kvLockedSubtreeScreenshot
 hiddenKvAssets / suppressedOldKvPaints / protectedHeroUiIds
 sourceToCloneNodeMap: 既有节点对应关系与新增节点清单
 renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 KV 内部几何/渐变方向未变、接缝连续、关键标题/Logo/主体核对、UI 未位移；contain 另核对完整四边
@@ -219,7 +222,7 @@ renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 K
 5. 按第 5 节执行 `kvFitPlan`，仅替换/适配白名单内副本 KV 主图、必要补底及被替代的旧 KV 资产；复制 Paint 数组后重新赋值。
 6. 返回原/副本 ID、位置、Paint 索引、新旧 imageHash、尺度/裁切适配记录和 Hero 实际截图。
 
-本阶段禁止任何 UI 颜色写入；KV 专属环境补底属于图像适配，可在本阶段执行。若调用失败，先检查是否已经生成副本，禁止盲目再次复制。
+本阶段禁止任何 UI 颜色写入；KV 专属环境补底属于图像适配，可在本阶段执行。新 KV 放置完成后立即冻结锁定子树，后续阶段不能把它当作副本 UI 全树的一部分参与颜色解绑或主题映射。若调用失败，先检查是否已经生成副本，禁止盲目再次复制。
 
 ## 7. 建立 `mutationPlan`
 
@@ -234,6 +237,10 @@ renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 K
 允许的 Paint/Alpha/配方差异
 是否需要实例本地覆盖或解绑及原因
 ```
+
+同时按《局部试色与执行工具》第 6 节建立 `mutationPlan.regionPlan`：卡片/完整视觉区域是 Phase 6 的完成单位，角色配方仍可跨卡复用。视觉上归属卡片但位于其 Frame 子树外的兄弟叠层不得漏登记；页级共享底色只登记一次，其他区域引用其状态。
+
+把 `kvLockedSubtreeRootIds` 作为所有区域计划的 `excludedSubtreeRootIds`。工具建立允许写入集合、扫描旧色或遍历颜色绑定时遇到这些根必须停止下钻；不是只保护根节点本身。任何 `operations[].cloneId` 落入锁定子树均为预执行失败，不能先写后恢复。
 
 按《局部试色与执行工具》第 1 节建立 `trialScenes`、依赖和精确写入通道，再汇总 `representativeNodeIds`。覆盖普通卡、收益复合卡、标题、多层功能 Icon、小按钮、一级 Tab 和 CTA 的实际角色；按《叠层合成审计》区分非等价材质、状态和背景。先列实例→代表映射，再写色；必要共享背景 Paint 单独登记为 `sharedContextPaths`，不能只写前景、用旧背景验证新方案。
 
@@ -251,6 +258,7 @@ representative-trial → trial-review(pass) → expand
 
 - 只允许修改 `trialScenes` 中代表节点、必要 Paint 后代及确切共享背景通道；依赖节点不自动获得写权限。
 - 禁止通过全树遍历、旧色相、坐标、面积或名称发现并修改其他节点。
+- 每个区域调用都传入 `excludedSubtreeRootIds=kvLockedSubtreeRootIds`；KV 内命中的旧 UI 相似色不进入残色计数，也不触发自动修正。
 - 只读遍历可以进行，但写入必须由 ID 白名单驱动。
 - 返回 `representativeMutatedNodeIds`，任何白名单外节点都使本阶段失败。
 - 彩度、对比度或高光合成不满足目标时，在同一副本的同一白名单内依次写入候选配方并截图，记录每次实际使用的配方与结果，最终恢复选中的配方；禁止把仅有色板/文字描述的方案记为已渲染比较。
@@ -261,7 +269,7 @@ representative-trial → trial-review(pass) → expand
 
 - 必须在后续独立调用中验证对应场景门禁和新鲜读回指纹；配方、共享背景、映射或祖先变化使相关门禁失效，不能只查历史 PASS。
 - 按 `mutationPlan` 的角色映射扩展，返回 `expansionMutatedNodeIds`。
-- 按完整视觉区域分批，区域内按背景/表面→材质→文字/Icon→操作状态的依赖顺序处理，组合完成后统一截图。每批属性读回与保护检查不延后；不能用通用旧色扫描脚本覆盖全页。
+- 按 `regionPlan` 一次完成一张卡片或其他完整视觉区域，区域内按背景/表面→材质→文字/Icon→操作状态的依赖顺序处理；请求超限时只在该区域内拆技术批次，不跨区域穿插。组合完成后统一截图并完成该区残色/保护/覆盖检查，通过后再进入下一区域。每批属性读回与保护检查不延后；不能用通用旧色扫描脚本覆盖全页。
 - 一张有效区域截图可复用到多个角色检查；只重截变化区域，最终仍核对逐实例上下文和整页累计视觉重量。
 
 所有批次的前值、目标值、部分失败和重试统一按《局部试色与执行工具》第 3 节落盘与恢复。正常属性批次不混入 clone/detach/增删层，失败后先读回，不假定异常意味着没有任何写入。
@@ -305,6 +313,7 @@ GRADIENT Paint: gradientStops[].color/alpha（保持结构有效开关）
 ```text
 sourceFrameId / cloneFrameId / clonePosition / kvReplacement / kvFitPlan
 visualSurfaceCarrierMap / paintLayerRecipes
+regionPlan（区域归属、逐区状态与验收证据）
 representativeNodeIds / representativeMutatedNodeIds
 representativeCoverage
 trialScenes / trialGates / sharedContextPaths

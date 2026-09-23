@@ -24,11 +24,33 @@ def _text(draw, xy, value, fill, font):
     draw.text(xy, str(value), fill=fill, font=font)
 
 
-def _text_color(rgb):
+def _luminance(rgb):
     linear = [v / 255 / 12.92 if v / 255 <= .04045
               else ((v / 255 + .055) / 1.055) ** 2.4 for v in rgb]
-    luminance = sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
-    return (30, 20, 34) if luminance > .45 else (255, 250, 255)
+    return sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
+
+
+def _text_color(rgb):
+    luminance = _luminance(rgb)
+    dark = (30, 20, 34)
+    light = (255, 250, 255)
+    dark_luminance = _luminance(dark)
+    light_luminance = _luminance(light)
+    dark_contrast = (luminance + .05) / (dark_luminance + .05)
+    light_contrast = (light_luminance + .05) / (luminance + .05)
+    return dark if dark_contrast > light_contrast else light
+
+
+def _button_text_color(scheme):
+    if "buttonTextColor" in scheme:
+        return _rgb(scheme["buttonTextColor"])
+    if scheme.get("buttonVariant") == "gold-bright":
+        return (82, 48, 27)
+    if scheme.get("buttonTextPriority") == "vivid-contrast-white":
+        return (255, 255, 255)
+    # Other buttons need a contextual decision. This is only a provisional
+    # preview fallback; the real host and material are reviewed later.
+    return _text_color(_rgb(scheme["colors"]["button"]))
 
 
 def _mix(a, b, weight):
@@ -65,7 +87,7 @@ def _panel(draw, origin, scheme, font, small_font):
 
     draw.rounded_rectangle((ox + 190, oy + 140, ox + 350, oy + 192), radius=18,
                            fill=rgb["button"])
-    _text(draw, (ox + 246, oy + 157), "BUTTON", _text_color(rgb["button"]), small_font)
+    _text(draw, (ox + 246, oy + 157), "BUTTON", _button_text_color(scheme), small_font)
 
     for i, role in enumerate(ROLES):
         x = ox + 18 + i * 61
@@ -85,17 +107,29 @@ def render_palette_proposals(data, output):
     for scheme in schemes:
         required = {"id", "targetUiMode", "colors"}
         strategy_keys = {"hueStrategy", "buttonVariant"} & set(scheme)
-        if not required.issubset(scheme) or set(scheme) - (required | {"hueStrategy", "buttonVariant"}):
+        optional = {"hueStrategy", "buttonVariant", "buttonTextPriority", "buttonTextColor", "buttonTextEvidence"}
+        if not required.issubset(scheme) or set(scheme) - (required | optional):
             raise ValueError("each scheme requires id, targetUiMode, colors and one strategy field")
         if len(strategy_keys) != 1:
             raise ValueError("each scheme requires exactly one of hueStrategy or buttonVariant")
         if scheme["targetUiMode"] not in {"light", "dark"}:
             raise ValueError("targetUiMode must be light or dark")
-        if "hueStrategy" in scheme and scheme["hueStrategy"] not in {"analogous", "complementary"}:
-            raise ValueError("hueStrategy must be analogous or complementary")
+        if "hueStrategy" in scheme and scheme["hueStrategy"] not in {"analogous", "contrast", "complementary"}:
+            raise ValueError("hueStrategy must be analogous or contrast (legacy complementary accepted)")
         if "buttonVariant" in scheme and scheme["buttonVariant"] not in {
                 "metallic-analogous", "gold-bright", "clean-deep"}:
             raise ValueError("buttonVariant must be metallic-analogous, gold-bright or clean-deep")
+        if scheme.get("buttonTextPriority") not in {None, "contextual", "vivid-contrast-white"}:
+            raise ValueError("buttonTextPriority must be contextual or vivid-contrast-white")
+        if (scheme.get("buttonTextPriority") == "vivid-contrast-white" and
+                scheme.get("hueStrategy") not in {"contrast", "complementary"}):
+            raise ValueError("vivid-contrast-white priority requires a vivid contrast scheme")
+        if ("buttonTextColor" in scheme) != ("buttonTextEvidence" in scheme):
+            raise ValueError("buttonTextColor override requires buttonTextEvidence")
+        if "buttonTextColor" in scheme:
+            _rgb(scheme["buttonTextColor"])
+            if not isinstance(scheme["buttonTextEvidence"], str) or not scheme["buttonTextEvidence"].strip():
+                raise ValueError("buttonTextEvidence must explain the text choice in its actual context")
         if not isinstance(scheme["id"], str) or not scheme["id"].strip():
             raise ValueError("scheme id required")
         if set(scheme["colors"]) != set(ROLES):
@@ -126,6 +160,10 @@ def render_palette_proposals(data, output):
     manifest = {
         "inputSha256": hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
         "output": str(output), "pixels": [width, height], "schemeIds": ids,
+        "buttonTextColors": {scheme["id"]: "#" + "".join(f"{v:02X}" for v in _button_text_color(scheme))
+                             for scheme in schemes},
+        "buttonTextPriorities": {scheme["id"]: scheme.get("buttonTextPriority", "contextual")
+                                 for scheme in schemes},
         "note": "Communication preview only; not a Figma render or material-validation PASS.",
     }
     output.with_suffix(output.suffix + ".json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))

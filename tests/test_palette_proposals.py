@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from render_palette_proposals import ROLES, render_palette_proposals
+from render_palette_proposals import ROLES, _button_text_color, render_palette_proposals
 
 
 def proposal():
@@ -58,6 +58,49 @@ def metallic_proposals():
 
 
 class PaletteProposalTests(unittest.TestCase):
+    def test_very_vivid_contrast_button_previews_white_text_first(self):
+        candidate = proposal()
+        candidate['schemes'][0]['hueStrategy'] = 'contrast'
+        candidate['schemes'][0]['buttonTextPriority'] = 'vivid-contrast-white'
+        candidate['schemes'][0]['colors']['button'] = '#FF00D0'
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = render_palette_proposals(candidate, Path(directory) / 'proposal.png')
+        self.assertEqual(_button_text_color(candidate['schemes'][0]), (255, 255, 255))
+        self.assertEqual(manifest['buttonTextColors'], {'D-C': '#FFFFFF'})
+        self.assertEqual(manifest['buttonTextPriorities'], {'D-C': 'vivid-contrast-white'})
+
+    def test_other_button_text_depends_on_contextual_scheme(self):
+        candidate = proposal()['schemes'][0]
+        candidate['hueStrategy'] = 'analogous'
+        candidate['buttonTextPriority'] = 'contextual'
+        candidate['colors']['button'] = '#C3E7F9'
+        self.assertEqual(_button_text_color(candidate), (30, 20, 34))
+        candidate['colors']['button'] = '#3A1A6F'
+        self.assertEqual(_button_text_color(candidate), (255, 250, 255))
+
+    def test_vivid_white_priority_only_applies_to_contrast(self):
+        candidate = proposal()
+        candidate['schemes'][0]['hueStrategy'] = 'analogous'
+        candidate['schemes'][0]['buttonTextPriority'] = 'vivid-contrast-white'
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'vivid contrast'):
+                render_palette_proposals(candidate, Path(directory) / 'proposal.png')
+
+    def test_explicit_button_text_requires_contextual_evidence(self):
+        candidate = proposal()
+        candidate['schemes'][0]['buttonTextColor'] = '#301526'
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'buttonTextEvidence'):
+                render_palette_proposals(candidate, Path(directory) / 'proposal.png')
+            candidate['schemes'][0]['buttonTextEvidence'] = 'Real 1:1 trial: dark text suits the actual button material and host.'
+            manifest = render_palette_proposals(candidate, Path(directory) / 'proposal.png')
+        self.assertEqual(manifest['buttonTextColors'], {'D-C': '#301526'})
+        self.assertEqual(manifest['buttonTextPriorities'], {'D-C': 'contextual'})
+
+    def test_gold_bright_preview_uses_brown_text_exception(self):
+        scheme = metallic_proposals()['schemes'][1]
+        self.assertEqual(_button_text_color(scheme), (82, 48, 27))
+
     def test_public_preview_has_six_anchor_roles(self):
         self.assertEqual(ROLES, ('background', 'card', 'number', 'icon', 'button', 'tab'))
         with tempfile.TemporaryDirectory() as directory:

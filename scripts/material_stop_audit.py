@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Detect visible metallic-gradient stop collapse in mapped Figma Icon subtrees.
+"""Detect visible gradient-stop collapse in mapped Figma Icon subtrees.
 
 This is an early fail-fast guard, not a substitute for native-size visual review.
 """
 
 import argparse
+import colorsys
 import json
 import math
 from pathlib import Path
@@ -22,14 +23,16 @@ def spread(colors):
     return max((math.dist(a, b) for i, a in enumerate(colors) for b in colors[i + 1:]), default=0.0)
 
 
-def inspect_metallic_stops(source, clone, mapping, roots,
-                           min_source_spread=0.025, max_target_spread=0.005):
+def inspect_icon_gradient_stops(source, clone, mapping, roots,
+                                min_source_spread=0.025, max_target_spread=0.005,
+                                min_source_saturation_spread=0.08,
+                                max_target_saturation_spread=0.02):
     source_rows = {row["id"]: row for row in source["nodes"]}
     clone_rows = {row["id"]: row for row in clone["nodes"]}
     roots = set(roots)
     missing = sorted(roots - source_rows.keys())
     if missing:
-        raise ValueError(f"metallic roots missing in source: {missing}")
+        raise ValueError(f"icon roots missing in source: {missing}")
 
     def under_root(node_id):
         while node_id in source_rows:
@@ -76,14 +79,32 @@ def inspect_metallic_stops(source, clone, mapping, roots,
                 checked += 1
                 source_spread = spread(source_colors)
                 clone_spread = spread(clone_colors)
+                source_saturation_spread = spread([[colorsys.rgb_to_hsv(*c)[1]] for c in source_colors])
+                clone_saturation_spread = spread([[colorsys.rgb_to_hsv(*c)[1]] for c in clone_colors])
                 if source_spread >= min_source_spread and clone_spread <= max_target_spread:
                     findings.append({"sourceId": source_id, "cloneId": clone_id,
                                      "paintPath": f"{path}/{index}",
                                      "reason": "visible gradient stops collapsed",
                                      "sourceSpread": round(source_spread, 4),
-                                     "cloneSpread": round(clone_spread, 4)})
-    return {"status": "fail" if findings else "pass", "metallicRoots": sorted(roots),
+                                     "cloneSpread": round(clone_spread, 4),
+                                     "sourceSaturationSpread": round(source_saturation_spread, 4),
+                                     "cloneSaturationSpread": round(clone_saturation_spread, 4)})
+                elif (source_saturation_spread >= min_source_saturation_spread
+                      and clone_saturation_spread <= max_target_saturation_spread):
+                    findings.append({"sourceId": source_id, "cloneId": clone_id,
+                                     "paintPath": f"{path}/{index}",
+                                     "reason": "visible gradient saturation relation collapsed",
+                                     "sourceSpread": round(source_spread, 4),
+                                     "cloneSpread": round(clone_spread, 4),
+                                     "sourceSaturationSpread": round(source_saturation_spread, 4),
+                                     "cloneSaturationSpread": round(clone_saturation_spread, 4)})
+    return {"status": "fail" if findings else "pass", "iconRoots": sorted(roots),
+            "metallicRoots": sorted(roots),
             "checkedVisibleGradients": checked, "findings": findings}
+
+
+# Backwards-compatible name for existing callers.
+inspect_metallic_stops = inspect_icon_gradient_stops
 
 
 def main():
@@ -91,14 +112,14 @@ def main():
     parser.add_argument("source")
     parser.add_argument("clone")
     parser.add_argument("node_map")
-    parser.add_argument("--roots", nargs="+", required=True, help="source metallic Icon root IDs")
+    parser.add_argument("--roots", nargs="+", required=True, help="source Icon root IDs with visible gradients")
     parser.add_argument("--out")
     args = parser.parse_args()
     source = json.loads(Path(args.source).read_text())
     clone = json.loads(Path(args.clone).read_text())
     node_map = json.loads(Path(args.node_map).read_text())
     mapping = node_map.get("mapping", node_map)
-    result = inspect_metallic_stops(source, clone, mapping, args.roots)
+    result = inspect_icon_gradient_stops(source, clone, mapping, args.roots)
     if args.out:
         Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2))
     print(json.dumps({**result, "findings": result["findings"][:12]}, ensure_ascii=False))

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from material_stop_audit import inspect_metallic_stops
+from material_stop_audit import inspect_icon_gradient_stops, inspect_metallic_stops
 from split_revision_ops import encoded_size, split_operations
 
 
@@ -28,6 +28,13 @@ class MaterialStopAuditTests(unittest.TestCase):
         clone = snapshot("c", [(0.2, 0.6, 0.9), (0.7, 0.9, 1.0)])
         result = inspect_metallic_stops(source, clone, {"s": "c"}, ["s"])
         self.assertEqual(result["status"], "pass")
+
+    def test_rejects_ordinary_icon_saturation_gradient_collapse(self):
+        source = snapshot("s", [(0.9, 0.95, 0.85), (0.35, 1.0, 0.05)])
+        clone = snapshot("c", [(0.55, 1.0, 0.0), (0.55, 1.0, 0.0)])
+        result = inspect_icon_gradient_stops(source, clone, {"s": "c"}, ["s"])
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["iconRoots"], ["s"])
 
 
 class BatchSplitTests(unittest.TestCase):

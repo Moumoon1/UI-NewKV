@@ -55,6 +55,58 @@ def color_inventory(snapshot):
             'count': len(entries), 'note': 'Stored channels, not inferred semantic or raster coverage.'}
 
 
+def color_binding_audit(snapshot):
+    """Fail if a deliverable clone still depends on a color variable/style."""
+    doc = snapshot_document(snapshot)
+    residual = []
+
+    def active(value):
+        return value not in (None, '', [], {}, {'$undefined': True})
+
+    def add(node_id, path, kind):
+        residual.append({'nodeId': node_id, 'path': path, 'kind': kind})
+
+    def scan(value, node_id, path):
+        if isinstance(value, dict):
+            binding = value.get('boundVariables')
+            if isinstance(binding, dict) and active(binding.get('color')):
+                add(node_id, path + '/boundVariables/color', 'color-variable')
+            for key, child in value.items():
+                if key != 'boundVariables':
+                    scan(child, node_id, path + '/' + escape(key))
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                scan(child, node_id, path + '/' + str(index))
+
+    for node_id, row in doc['nodes'].items():
+        props = row['props']
+        base = '/nodes/' + escape(node_id) + '/props'
+        for key in ('fillStyleId', 'strokeStyleId'):
+            if active(props.get(key)):
+                add(node_id, base + '/' + key, 'paint-style')
+        if active(props.get('effectStyleId')) and any(
+                isinstance(effect, dict) and isinstance(effect.get('color'), dict)
+                for effect in props.get('effects', [])):
+            add(node_id, base + '/effectStyleId', 'color-effect-style')
+        node_bindings = props.get('boundVariables')
+        if isinstance(node_bindings, dict):
+            for key in ('fills', 'strokes', 'effects', 'textRangeFills'):
+                if active(node_bindings.get(key)):
+                    add(node_id, base + '/boundVariables/' + key, 'color-variable')
+        for key in ('fills', 'strokes', 'effects', 'vectorNetwork'):
+            if key in props:
+                scan(props[key], node_id, base + '/' + key)
+        for key, runs in props.get('textRuns', {}).items():
+            if key == 'fillStyleId':
+                for index, run in enumerate(runs):
+                    if active(run.get('value')):
+                        add(node_id, base + '/textRuns/fillStyleId/' + str(index), 'paint-style')
+            elif key == 'fills':
+                scan(runs, node_id, base + '/textRuns/fills')
+    return {'status': 'fail' if residual else 'pass', 'residualCount': len(residual),
+            'residualBindings': residual}
+
+
 def coverage(snapshot, manifest):
     inventory = color_inventory(snapshot)
     if manifest.get('schemaVersion') != 1 or manifest.get('sourceHash') != inventory['sourceHash']:
@@ -165,7 +217,8 @@ def batch_plan(batch, max_operations=64, max_bytes=48000):
 
 
 MACHINE_RULES = {'source-unchanged', 'clone-allowed-differences', 'color-coverage', 'plan-complete',
-                 'contrast-baseline', 'color-relations', 'visual-unit-coverage'}
+                 'contrast-baseline', 'color-relations', 'visual-unit-coverage',
+                 'color-bindings-clear'}
 VISUAL_RULES = {'kv-fit', 'theme-consistency', 'clarity', 'hierarchy', 'button-salience',
                 'cta-salience', 'icon-clarity', 'readability', 'material-layers',
                 'surface-discernibility', 'state-discernibility', 'control-family-consistency'}
@@ -581,7 +634,8 @@ def finalize(spec):
     done = complete(source, actual, plan, policy, mapping)
     source_guard = compare(source, source_now, {'schemaVersion': 1, 'allowedChanges': [], 'protectedPaths': []})
     machine = {'source-unchanged': source_guard, 'clone-allowed-differences': done['propertyGuard'],
-               'color-coverage': done['coverage'], 'plan-complete': done}
+               'color-coverage': done['coverage'], 'plan-complete': done,
+               'color-bindings-clear': color_binding_audit(actual)}
     relation_rule = rules['color-relations'].get('verifier', {})
     if not spec.get('colorRelations') or relation_rule.get('type') != 'color-relations':
         raise ValueError('frozen colorRelations are required, including after local corrections')

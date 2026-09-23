@@ -27,6 +27,33 @@ def manifest(source):
          'disposition': 'preserve'} for entry in inv['entries']]}
 
 
+class ColorBindingAuditChecks(unittest.TestCase):
+    def test_catches_paint_gradient_effect_and_text_style_bindings(self):
+        source = snapshot()
+        icon = source['nodes'][1]['props']
+        icon['fillStyleId'] = 'S:old'
+        icon['fills'][0]['boundVariables'] = {'color': {'type': 'VARIABLE_ALIAS', 'id': 'V:old'}}
+        icon['vectorNetwork']['regions'][0]['fills'][0]['gradientStops'][1]['boundVariables'] = {
+            'color': {'type': 'VARIABLE_ALIAS', 'id': 'V:gradient'}}
+        icon['effects'] = [{'type': 'DROP_SHADOW', 'color': {'r': .1, 'g': .2, 'b': .3, 'a': 1},
+                            'boundVariables': {'color': {'type': 'VARIABLE_ALIAS', 'id': 'V:shadow'}}}]
+        icon['boundVariables'] = {'fills': [{'type': 'VARIABLE_ALIAS', 'id': 'V:old'}],
+                                  'itemSpacing': {'type': 'VARIABLE_ALIAS', 'id': 'V:space'}}
+        source['nodes'].append({'id': 'label', 'parentId': 'page', 'children': [], 'props': {
+            'type': 'TEXT', 'textRuns': {'fillStyleId': [{'start': 0, 'end': 2, 'value': 'S:text'}]}}})
+        source['nodes'][0]['children'].append('label')
+        result = execution.color_binding_audit(source)
+        self.assertEqual(result['status'], 'fail')
+        self.assertGreaterEqual(result['residualCount'], 5)
+        self.assertFalse(any('itemSpacing' in entry['path'] for entry in result['residualBindings']))
+
+    def test_passes_when_only_noncolor_binding_remains(self):
+        source = snapshot()
+        source['nodes'][1]['props']['boundVariables'] = {
+            'itemSpacing': {'type': 'VARIABLE_ALIAS', 'id': 'V:space'}}
+        self.assertEqual(execution.color_binding_audit(source)['status'], 'pass')
+
+
 class DisplayedContinuityChecks(unittest.TestCase):
     def test_multiple_rules_share_evidence_without_skipping_failed_or_missing_group(self):
         import hashlib

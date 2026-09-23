@@ -20,7 +20,7 @@ inspect → kv-style-check → kv-analysis → palette-proposal
 - `kvStyleComparison` 在配色方案与任何写入前完成，包含新旧 KV 的画风差异证据及原 UI 冲突检查；模式不是仅由颜色、IP 更换或深浅变化触发。
 
 - `preflightThemeDecision=pass` 早于首次 UI 写色。
-- `sourceKvTone/sourceUiMode/targetKvTone` 均有独立证据；`paletteProposal` 的数量与角色符合《配色方案提案》，每套在展示前已绑定表面家族、`accentFamilyPlan`、目标显著性/明度拓扑、彩度/受光目标、面积化预览证据及 `proposalColorPreflight=pass`；`paletteSelection` 有用户明确选择，最终 `targetUiMode/hueStrategy` 与所选方案一致。最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖；`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式。
+- `sourceKvTone/sourceUiMode/targetKvTone` 均有独立证据；`paletteProposal` 的数量与角色符合《配色方案提案》，每套在展示前已绑定表面家族、`accentFamilyPlan`、`cardSurfaceStrategy`、`iconPairPlan`、目标显著性/明度拓扑、彩度/受光目标、面积化预览证据及 `proposalColorPreflight=pass`；`paletteSelection` 有用户明确选择，最终 `targetUiMode/hueStrategy` 与所选方案一致。最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖；`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式。
 - `representativeNodeIds` 早于代表试色产生。
 - `representativeCoverage` 覆盖全部非等价按钮/氛围材质、状态及需要不同方案的背景；全页实际实例清单与最终上下文核对数量一致，不能只验一类代表。
 - `representativeMutatedNodeIds` 只包含完整场景的白名单、必要后代及预登记共享背景通道；只读依赖不等于写权限。
@@ -71,13 +71,14 @@ light-to-dark 收益卡最多一个底部氛围 Fill
 
 - 副本实际显示用户的新 KV，原稿仍显示旧 KV。
 - `sourceVisualUnitType` 分类正确；若为 `composite-kv`，最终使用完整指定视觉单元或完整导出兜底，不是其中某个内层 IMAGE。整组原设计宽高、内部相对几何、裁切、文字、素材与 Paint 指纹保持。
+- `kvLockedSubtreeRootIds` 与 Phase 4 冻结值一致；UI 颜色解绑、代表试色、区域写入、旧色扫描和自动修正的目标集合均与锁定子树零交集。最终内部 Paint、文字、素材、渐变、绑定与相对几何指纹必须完全一致；发生过误写后再调回也不能沿用旧 PASS，须由冻结快照重新证明零差异。
 - `directFitCheck` 证明先检查了原尺寸/同宽使用；本可直接放入却人为缩小、为导航预留整圈边距，或随后补画构图，均为 FAIL。真实裁切导致的必要等比适配应有边界与截图证据。
 - Hero 外框位置、尺寸、裁切、圆角、Auto Layout 占位及下方 UI 起点不变；图片适配策略和 KV 专属载体只按白名单变更。
 - 默认保留原 KV 设计尺寸或页面同宽尺度，宽高比正确，允许超高部分仅从下方截去；不能为了完整显示尾部而整体缩小。记录实际可见/截去区域及标题、Logo、主体是否可见，关键内容意外被切须修正定位并复验。只有用户明确要求完整显示时，contain 分支要求整图四边完整。
 - 新 KV 内置底部纯色/渐变的类型、`gradientTransform`、色标位置/Alpha、方向和实际终点与源复合视觉单元一致；页面延伸从真实终点继续。不得翻转或重建方向，不得叠加旧接缝造成断层。普通重着色只改计划内色值/Alpha，任何 transform 或色标位置变化均须有独立授权与前后证据。
 - 实际截图确认主图经过全部祖先 clip/蒙版后符合已登记的尺度与下方裁切策略；contain 分支仍须整图完整；只设置 `FIT`、只检查节点边界或只比较 imageHash 均不足以通过。
 - contain 留白/透明处没有旧图透出；必要环境补底来自新 KV 稳定环境色，位于主图后方且不越出 Hero，没有重复标题/主体或新造内容。无留白则无需补底。
-- `protected-hero-controls` 按真实 `themeTransition` 逐节点核对：同模式全部样式精确保留；跨模式仅《Figma 执行规范》第 5.4 节预登记的前景及必要底托通道可适配，读回校验目标值及必要性证据。未登记样式、几何、字体、文案、素材、状态、节点/祖先 Alpha 保持，不新增底板或间接覆盖。实际新 KV 宿主上的可辨性与第 5.1 节适用的对比度策略仍必验；跨模式不机械追平原稿比值。记为 `protectedHeroControlsAudit`，不存在时带证据记不适用。
+- `protected-hero-controls` 按真实 `themeTransition` 逐节点核对：同模式全部外观样式精确保留，颜色变量/样式引用只在副本解除且不得改变有效显示色；跨模式仅《Figma 执行规范》第 5.4 节预登记的前景及必要底托通道可适配，读回校验目标值及必要性证据。未登记外观、几何、字体、文案、素材、状态、节点/祖先 Alpha 保持，不新增底板或间接覆盖。实际新 KV 宿主上的可辨性与第 5.1 节适用的对比度策略仍必验；跨模式不机械追平原稿比值。记为 `protectedHeroControlsAudit`，不存在时带证据记不适用。
 - `kv-asset-subtree` 仅隐藏已经烘焙进新 KV 的旧视觉资产；倒计时、规则、状态、导航等 `hero-adjacent-ui` 仍可见可读。
 - 每个 IMAGE Paint 已分类；内容、品牌素材与未知图片哈希未改变。
 
@@ -87,7 +88,7 @@ light-to-dark 收益卡最多一个底部氛围 Fill
 
 逐个检查 `visualSurfaceCarrierMap`：
 
-- 需要换肤的卡片、容器、Tab、标签和按钮实际 Rectangle/Vector/Boolean/Ellipse/Frame 已进入目标色板；媒体、前三名颜色保护项与 `protected-marketing-banner` 须与原稿一致，不要求进入目标色板。
+- 需要换肤的卡片、容器、Tab、标签和按钮实际 Rectangle/Vector/Boolean/Ellipse/Frame 已进入目标色板；浅色撞色方案的卡片稳定底按 `cardSurfaceStrategy` 为低彩近白或纯白，主题色只出现在原有允许的卡顶氛围/Chrome；媒体、前三名颜色保护项与 `protected-marketing-banner` 须与原稿一致，不要求进入目标色板。
 - 没有只改语义父 Frame 而漏掉异形承载层。
 - 没有给 UI 空外层或更大无圆角兄弟节点新增 Fill，造成方形底、圆角丢失或边界扩大；已登记的 Hero KV 环境补底单独按第 3 节验收。
 - 多层表面的 base、shadow、highlight、stroke、state-indicator 和 decoration 职责保持清楚。
@@ -109,14 +110,15 @@ contrast = (L1 + 0.05) / (L2 + 0.05)
 Phase 3 冻结 `contrastPolicy=source-baseline/contextual` 与 sourceUiMode、targetUiMode、adaptationMode 及理由。深→深、浅→浅且不涉及画风迁移时使用 `source-baseline`，真实可辨性与“不低于原稿对应对比度”同时必验；深浅转换或画风迁移使用 `contextual`，按新 KV、真实宿主、材质和角色确定目标，记录源/新比值但不以数值回退本身判失败。`4.5:1`、`3:1`、`7:1` 等 WCAG 固定数值仍仅作参考；用户明确要求 WCAG 或具体比值时另外记录 `contrastStandard=strict-standard`，两种策略都同时执行指定要求，不隐含要求 contextual 达到原稿极高比值。颜色可以根据 KV 调整，跨深浅可反转明暗方向；比较的是最终显示关系的比值，不是锁定旧 RGB、HSV V 或绝对亮度。
 
 - 普通文字、规则、必读信息及小号说明须在实际尺寸、真实背景上清楚可读，正文强弱层级明确；不能只因比值低于参考值判失败，也不能仅凭比值高认定清楚。
+- `targetUiMode=light` 时，普通 `textBaseColor` 的稳定基色默认须落在 HSB `B 18–32`，`text.primary` 为 `100%` 有效文字强度；白色、近白或浅色卡片上的主文案在 1:1 仍显淡时，即使理论对比度合格也为 FAIL，回到配方继续降低 B。`targetUiMode=dark` 时，普通 `textBaseColor` 稳定色标须为 `B=100`，`text.primary` 使用 `100%` 有效强度，次级层级通过有效 Alpha 建立；无已登记局部宿主例外却把深色 UI 普通文字基色降到 `B<100`，直接 FAIL。Hue/S 的微调不能代替这项模式分流。
 - 金额、任务/作品中已确认的 `data.emphasis` 区间与顶部收益强调数据须鲜明、突出、清晰，不为追求参考数值压成灰闷深色。小号单位/说明与主数字分开判断，不把整段正文都升级为强调数字。
 - 按钮文字与按目标模式和角色选定的主体联合验收；浅色 UI 的主要操作可使用鲜亮主体，或在偏浅宿主上使用有 KV/金属证据的干净深色主体，深色 UI 同样按宿主选择。同时检查渐变最亮端、最暗端和半透明合成点是否处于实际文字覆盖范围。远离字形的装饰亮边不充当文字背景，穿过文字的亮带不能遗漏。采样记录须包含坐标、对应文字节点及背景合成依据；不得把抗锯齿文字边缘误当作背景。
 - KV 衔接文字、认证/状态、每种正文层级、Tab 和按钮文字分别抽检真实节点。
-- 按钮浅色/深色文字都经过组合比较，最终方向有 KV、材质、显著性和审美证据，不是固定纯白/纯黑或单一最高数值。
+- `buttonTextPriority=vivid-contrast-white` 的特别鲜艳撞色按钮先用白/近白字完成真实 1:1 组合检查；白字在实际覆盖区对比度不足时再比较深字，保留白字截图、背景采样、失败原因和最终选择依据。其他按钮按已登记情境选择浅字或深字并检查实际材质、宿主和字号；不强制先试白字，也不按单一最高对比度数值自动定案。`gold-bright` 的默认深棕字按其专门规则验收。
 
 数值参考来自 [W3C WCAG 对比度最低要求](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html)。默认换肤不等同于 WCAG 合规验收。`strict-standard` 中依据用户要求判断字号、实际显示缩放、字重及真实语义豁免；不能把普通说明标成装饰来豁免，也不能用视觉通过冒充标准达标。精确保护文字保持原稿 Paint，必要冲突如实披露，不授权改保护色。
 
-`textRampIntegrity`：普通文字默认共享 `textBaseColor`，`100/80/60/40` 仅为有效强度的起点，不重复乘入原节点弱化。真实背景需要的 Alpha/局部 RGB 差异分别登记 `textRampOverride` / `textBaseColorOverride`；普通 TEXT 自身 opacity 按 `textNodeAlphaOverrides` 逐项验收。层级必须真实清楚，但不能只因次级文字为 100% 就判失败；有依据的局部高 Alpha 不等于全页无差别拉满。按钮、链接、语义状态、标题和关键数据按独立角色验收；精确保护文字不套用新阶梯。
+`textRampIntegrity`：先核对 `textTonePlan.targetUiMode / textBaseHsb / primaryEffectiveStrength / primaryHostClasses / overrides`。浅色 UI 的普通基色执行低 B 深色门禁，深色 UI 的普通基色执行 `B=100` 门禁；`text.primary` 均为 `100%`，`100/80/60/40` 仅是其余层级有效强度的起点，不重复乘入原节点弱化。真实背景需要的 Alpha/局部 RGB 差异分别登记 `textRampOverride` / `textBaseColorOverride`；普通 TEXT 自身 opacity 按 `textNodeAlphaOverrides` 逐项验收。层级必须真实清楚，但不能只因次级文字为 100% 就判失败；有依据的局部高 Alpha 不等于全页无差别拉满。按钮、链接、语义状态、标题和关键数据按独立角色验收；精确保护文字不套用新阶梯。
 
 ### 可读性修正与约束
 
@@ -168,7 +170,7 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 1. 核对 `kvAnalysis.colorAnchors` 的名称、原图坐标、真实像素、空间角色、连续面积/横向覆盖、实际可见 Hero 下缘接触、纹理具体程度、前景风险与延展适合度，以及 `surfaceFamilyPlan` 和角色 Recipe 的引用。主表面锚点须来自可延展环境，大面积连续背景优先于局部前景物；底部候选只有满足可见、连续、面积、颜色稳定/较纯和环境身份条件时才能因接缝优势提高优先级。样本与锚点名称/角色不符、没有来源依据或来源角色不匹配，返回 Phase 2/3，不以“位于底部”“同属暖色、材质相同”放行。
 2. 将 KV 原始区域与最终页面背景、卡片、容器和主要按钮/CTA 并排看彩色 1:1。分开记录原 Paint RGB、最终合成代表样本与冷暖/色相倾向；不要从字形抗锯齿、亮边或最鲜艳像素取代表色。按 `surfaceFamilyPlan.hueRelationshipPlan` 检查：默认同一或相近色相家族，明度、彩度与材质仍须形成可辨层次和醒目操作，不能要求按钮与背景同 Hex。
-3. 检查深浅转换后的环境家族是否仍成立，已有氛围/纹理/反射有没有把大面积颜色带偏。无金属 `complementary` 方案核对可靠 `surfaceContrastBasis`、`contrastDerivation=hue-opposition`、对向候选及可见色相分离；同一 Hue 仅深浅不同不能通过。金属方案核对 `metalAccentEvidence` 和 `buttonVariant`：`metallic-analogous` 对应本次金属家族，`gold-bright` 的主体中间调为正常明亮金黄且高彩度、受光面积充分，并落在类似 `#FFEED7→#FFC58A`、`#FFEEC6→#F9DB92`、`#FFE5A3→#FFC165` 的暖亮视觉范围而非机械固定值；`clean-deep` 有来源且不灰黑暗沉。暗铜、棕橙、土黄、只靠窄高光显金，或为迁就白字而压暗的 `gold-bright` 直接 FAIL。背景和卡片须保持已声明的连续环境家族，Tab 保持表面同系；功能 Icon 图形引用或有依据地派生自 `schemeAnchorContract.icon`，主要小按钮与 CTA 共同引用 `schemeAnchorContract.button`，不能出现黄/橙等可见分裂。同时检查 Icon/按钮与 KV/真实宿主是否协调。
+3. 检查深浅转换后的环境家族是否仍成立，已有氛围/纹理/反射有没有把大面积颜色带偏。无金属 `contrast` 方案核对可靠 `surfaceContrastBasis`、约 180° 对向候选与 KV 高彩高明度候选的比较、`contrastDerivation=hue-opposition|kv-vivid-accent` 及可见色相分离；同一 Hue 仅深浅不同不能通过。金属方案核对 `metalAccentEvidence` 和 `buttonVariant`：`metallic-analogous` 对应本次金属家族，`gold-bright` 的主体中间调为正常明亮金黄且高彩度、受光面积充分，并落在类似 `#FFEED7→#FFC58A`、`#FFEEC6→#F9DB92`、`#FFE5A3→#FFC165` 的暖亮视觉范围而非机械固定值；`clean-deep` 有来源且不灰黑暗沉。暗铜、棕橙、土黄、只靠窄高光显金，或为迁就白字而压暗的 `gold-bright` 直接 FAIL。背景和卡片须保持已声明的连续环境家族，Tab 保持表面同系；功能 Icon 图形引用或有依据地派生自 `schemeAnchorContract.icon`，主要小按钮与 CTA 共同引用 `schemeAnchorContract.button`，不能出现黄/橙等可见分裂。同时检查 Icon/按钮与 KV/真实宿主是否协调。
 4. 生成 `schemeAnchorConformanceAudit`：`background/card/number/icon/button/tab` 六个公开锚点都至少有一个稳定可见 `anchorId` 通道，实际目标 RGB 与用户选定方案逐通道一致。Tab 的主要选中底板不得改绑按钮/Icon 色，按钮/Icon/数字也不得只保持“同色系”却换掉代表值。锚点缺失、错绑或实际读回漂移直接 FAIL；若确需改变公开值，返回 Phase 2 重新展示并等待用户确认。
 5. 核对 `accentFamilyPlan` 与最终稳定主体：普通功能 Icon 的稳定主体从背景/卡片的连续环境家族提取，不从孤立反光或按钮色倒推；深色 UI 的公开 `number` 与 `icon` 必须同 Hex/RGB，且高亮数字、Icon 的可见代表区域分别兑现该锚点。按钮可保留第二强调家族；浅色 UI 的数字可独立，但数字/Icon/按钮默认仍不超过两个显著高彩家族，第三家族只在事先有主题级 KV/业务/用户证据时例外。用彩色 1:1、模糊图及缩略图看重复 Icon 是否堆出新的焦点；小面积金属反射可有不同光色，但不得让它成为 Icon 主体。发现漂移时若六色公开锚点已经用户确认，不能静默改 Hex，须返回 Phase 2 重新展示受影响方案并确认。
 6. 彩色模糊图与缩略图检查全页累计色彩面积：主家族仍须主导，局部植被/反光/强调色不能经过大面积和高频重复成为无依据的第二主底色；撞色方案仍须清楚呈现反差和面积主次。灰度用于明暗，不能代替这项彩色检查。
@@ -207,24 +209,25 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ### Icon
 
+- 每张卡片先用 `titlePaintInventory` 与 `iconGlyphInventory` 和全量颜色通道清单逐路径做差集：标题 TEXT 的可见 Fill、文字区间、各渐变色标、Stroke、颜色 Effect 及标题装饰；Icon 图形本体的 Vector/Boolean/IMAGE、描边、材质色标，以及独立底托。所有非保护可编辑通道都要有目标配方和新鲜读回；只改卡片底色、标题光晕或 Icon 底托而本体保留旧色，直接 FAIL。位图图形若不可安全换色须保持 `raster-blocked` 并报告，不能靠叠加假图形/按钮将其记为完成。对照 1:1 原稿与新稿，缩小整页图不能代替逐层验收。
 - 所有需换肤功能 Icon 的 Fill 与 Stroke 均进入新主题，并引用或有依据地派生自 `schemeAnchorContract.icon`；稳定主体遵守 `accentFamilyPlan`，在真实底托上清楚，已有金属明暗与局部反射不塌缩。媒体/Logo/图片 Icon 与前三名受保护名次图形未改。
 - Icon 容器是 `Icon 底托 < 选中 Tab < 主要按钮/CTA` 中最轻的一层，同时弱于 Icon 图形；不能直接复用 Tab 或高饱和按钮色后仅降低节点 Alpha 来伪造层级。
-- 存在局部 Icon 底托时，按《颜色决策规则》第 7.1 节核对 `iconMaterialRecipe.container`：有独立颜色来源、图形/卡片关系与渐变职责；没有以“主色加白”代替判断，也没有为追求异色任意增加新色。允许有依据的辅助色、材质色或中性色，同主色不是验收条件。
+- 存在局部 Icon 底托时，按《颜色决策规则》第 7.1 节核对 `iconMaterialRecipe.container` 与 `iconPairPlan`：有独立颜色来源、图形/底托/卡片关系与渐变职责；图形和底托在同一真实单元中联合选择，没有以“主色加白”代替判断，也没有为追求异色任意增加新色。允许有依据的辅助色、材质色或中性色，同主色不是验收条件。
 - 图形、按钮与普通辅助底托均未被全模式 S/V 锁定；第 3.2 节浅→浅基线的适用范围明确，未扩大到其他宿主或底托，也未在视觉失败时被当成硬约束；无彩源底没有因原 `S=0` 被机械映射为统一中性色或统一 V。分别检查实际底托与卡片的冷暖/色相关系、图形与底托的承托关系，不能仅凭轮廓清楚通过；确属明确锁定项或保护项的底托有职责依据。
 - 实际尺寸下图形清楚，底托起到承托作用；整页重复排列的视觉权重合理，同族配方一致或变体有依据。底托可有柔和消隐边缘，不要求所有边界都强描边；同色混融或异色割裂时有针对性的试色修正。原渐变结构与透明度规则未因模仿参考而突破，前三名底托仍完全保留原 UI 配色。
 - 多层 Icon 保留可感知明暗层次及原高光位置、方向和覆盖范围，仅在第 3.2 节浅→浅基线真实通过并决定沿用，或明确通道锁定适用时保持原 S/V，其他情况不锁定数值跨度；不同 Paint 没有被写成相同渐变或相近暗色。
-- 原稿金属 Icon 的可见渐变在代表试色与最终全实例上执行 `scripts/material_stop_audit.py`；原有不同色标塌缩为同一 RGB 时，`iconMaterialAudit=FAIL → Phase 3/5/6`，先修色标角色并重新查看原生尺寸。无塌缩只通过这项确定性检查，仍须由真实截图证明受光面、镜面带和暗端可感知；不能把脚本 PASS 当作材质 PASS。
+- 原稿所有功能 Icon 的可见渐变（不限金属）在代表试色与最终全实例上执行 `scripts/material_stop_audit.py`；原有不同 RGB 或饱和度职责的色标塌缩为同一 RGB/同一 S 关系时，`iconMaterialAudit=FAIL → Phase 3/5/6`，先修色标角色并重新查看原生尺寸。无塌缩只通过这项确定性检查，仍须由真实截图证明受光面、镜面带和暗端可感知；不能把脚本 PASS 当作材质 PASS。
 - 实际尺寸下受光面、阴影、高光各自可感知；没有以层数相同或少量亮边代替材质成立的证据。参考图片的立体效果未被误报为目标矢量 Icon 已实现的效果。
-- Icon 图形与容器、文字、按钮清楚区分，没有发闷、过深、材质消失或重复抢焦点。
+- Icon 图形与容器、文字、按钮清楚区分，没有发闷、过深、材质消失或重复抢焦点；同一 1:1 截图明确排除了 `gradient-stop-collapse / container-too-heavy / pair-low-separation / pair-over-salient`。
 - `targetUiMode=light` 时，普通功能 Icon 底托须淡淡带有一层协调颜色，并明显弱于选中 Tab；但低强调不等于不可见，在 1:1 下临时忽略图形时，底托轮廓/表面仍须与卡片分离。实际尺寸、灰度、模糊和整页重复中不得暗沉、形成沉重色块或高频暗点，也不得融入卡片像缺少底托。不设固定明度差；底托过暗、过淡消失、接近 Tab 强度或因高频重复累计压过 Tab，均不能用“弱于按钮”或“图形还能看清”放行。
-- Icon 与按钮按《颜色决策规则》第 3.2–3.2.1 节核对已记录的目标 UI、KV 明暗与色彩力度、实际宿主和鲜亮/干净深色方向，检查来源与角色依据。Figma H/S/B 读回应符合预先登记的目标值和稳定主体色标护栏；使用浅→浅基线时逐色标核对其原 S/B/Alpha，仅当该基线真实通过且护栏不失败时才可沿用，偏离时记录必要调整理由；其他明确锁定项与原稿保持。各级 Alpha、混合模式、渐变空间结构及保护项按对应规则核对。原稿/新稿同尺寸真实场景中，主体、暗部、高光仍可区分，图形清楚、操作醒目；机械压低鲜亮色造成灰闷暗块或不同色标截断同色均失败。加深或提亮本身不构成失败；不能用通道保持、层数相同或少量亮边代替实际显著性。
+- Icon 与按钮按《颜色决策规则》第 3.2–3.2.1 节分别核对已记录的目标 UI、KV 明暗与色彩力度、实际宿主和鲜亮/干净深色方向，检查来源与角色依据。按钮执行按钮主体门禁；普通鲜亮 Icon 的稳定主体可为 `B=100`，不得仅凭 B 判过亮。Figma H/S/B 读回应符合 `iconPairPlan`，且原本不同的可见渐变色标在目标中仍有可感知 RGB 或 S/B 差异；使用浅→浅基线时逐色标核对其原 S/B/Alpha，仅当该基线真实通过且护栏不失败时才可沿用，偏离时记录必要调整理由；其他明确锁定项与原稿保持。各级 Alpha、混合模式、渐变空间结构及保护项按对应规则核对。原稿/新稿同尺寸真实场景中，主体、暗部、高光仍可区分，图形清楚、操作醒目；机械压低鲜亮色造成灰闷暗块或不同色标截断同色均失败。加深或提亮本身不构成失败；不能用通道保持、层数相同或少量亮边代替实际显著性。
 
 ### 小按钮与 CTA
 
 - 当前可用的全局 CTA 是最强操作焦点；大小主要按钮的共同操作色必须强于选中 Tab，选中 Tab 又强于普通 Icon 底托。CTA 与小按钮主体共用 `buttonPrimary`，CTA 的进一步强化来自原有尺寸与材质。按实际背景的 1:1 和整页缩略图检查整个按钮主体；主体与 Tab/底托近似时不能仅因字可读或按钮尺寸大而通过。
 - 小按钮与 CTA 的稳定主体共同引用 `schemeAnchorContract.button`，代表色、主体色相和中间调一致；Paint Recipe 只因原有材质层结构不同而派生暗部、高光和反射。出现黄/橙或其他可见异色分裂即 FAIL，CTA 的强化由尺寸与原有材质表达，而不是另选按钮色。独立可编辑 CTA 即使嵌套在营销 Banner 内也必须进入覆盖；只有已烘焙进不可编辑单图或用户明确要求整 Banner 含控件保持原样时才可排除。
 - 若使用金属矩阵，`metalAccentEvidence` 的来源区域、金属家族和稳定明暗关系必须与 `metallic-analogous` 配方逐项对应；`gold-bright` 是独立的正常明亮金色对照，检查其金黄色相、感知明度、有效彩度和受光面积，不要求 KV 已含金色像素，但禁止暗铜/棕橙/土黄替代，并核对其默认深棕按钮字；`clean-deep` 单独证明来源、彩度与受光，不得为了白字或对比度任意压成灰黑。
-- 一般启用的主要彩色小按钮与 CTA 默认共同使用纯白/近白文字方向。只有真实文字覆盖区域证明白字不清楚，且在不破坏 `buttonPrimary`、明快感和材质的前提下无法合理调整主体时，才允许登记深色字例外；仅深色字对比度更高、沿用方便或局部看起来稳妥均不成立。`gold-bright` 是明确例外，大小按钮默认共同使用深棕字；若未先验证深棕，或为保白字将金色压暗，直接 FAIL。禁用、次级和明确浅底按钮按已登记角色验收。
+- 特别鲜艳的无金属撞色小按钮与 CTA 若标为 `vivid-contrast-white`，共同优先使用纯白/近白文字方向，并须各有真实文字覆盖区的白字 1:1 试色。白字在真实文字覆盖区对比度不足时再试深色字，并依据可读性、`buttonPrimary`、明快感和材质效果选择；缺白字失败证据或仅深字静态比值更高均直接 FAIL。其他主要按钮的文字方向按实际材质、宿主和可读性确定，同一家族小/大按钮仍检查一致性，不套白字默认。`gold-bright` 默认共同使用深棕字；若未验证深棕，或为保白字将金色压暗，直接 FAIL。禁用、次级和明确浅底按钮按已登记角色验收。
 - 每个明确禁用按钮都有正常态映射，Fill、Stroke、Effect、文字色与正常态配方相同；唯一默认状态差异是最小完整按钮视觉单元相对正常态 `50%` 的整体有效透明度。另选灰/米/低彩 RGB、只把文字或底板单独变淡、或在已有 50% 衰减上再次乘 0.5，均 FAIL。记录 `disabledButtonOpacityAudit` 的正常/禁用根、实际有效倍率与防重复计算证据。
 - 非操作色块的面积和重复频率没有形成更强累计视觉重量。
 - 按钮没有与背景融为一体，未出现无光照依据的多色扩散、亮框吞没主体、与 KV 无关的大面积高饱和块等实际问题。不能仅因明亮、邻近色过渡或强高光而判“廉价/过艳”，也不能用降低饱和度或压暗全体角色作为默认修正。
@@ -245,7 +248,7 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 - 氛围只使用 `cardAtmospherePalette` 的环境色及邻近色；不含标题、人物、箭头、Logo、金属包边、按钮色或局部反光。
 - 氛围位置符合《颜色决策规则》第 5 节的默认锚点或有依据的原空间家族；不为套位置规则移动图层。
-- 按《颜色决策规则》第 5 节矩阵逐卡核对实际 `themeTransition`、稳定底色与完整氛围叠层：`light-to-dark` 有可感知局部有色受光，不能是白灰雾或暗块；`dark-to-light` 的每个旧光影/形状都有 `keep/fade/remove-visually` 结论，干净浅底上只保留必要的极淡环境光。冗余纯装饰氛围可通过既有 Paint/色标 Alpha=0 视觉移除，但节点、几何、蒙版和稳定底色不变；若仍在卡顶形成暗了一块、灰带、厚重光斑或高频形状，直接 FAIL。同模式保持空间配方，已登记材质强度例外逐项核对。
+- 先核对浅色撞色方案的 `cardSurfaceStrategy`：`tinted-near-white` 的稳定底明显降低 S 并提高明度，`pure-white-atmosphere` 的稳定底为纯白且主题色只留在原有顶部氛围/Chrome；页面↔卡片边界仍清楚，卡片没有因主题染色显脏。再按《颜色决策规则》第 5 节矩阵逐卡核对实际 `themeTransition`、稳定底色与完整氛围叠层：`light-to-dark` 有可感知局部有色受光，不能是白灰雾或暗块；`dark-to-light` 的每个旧光影/形状都有 `keep/fade/remove-visually` 结论，干净浅底上只保留必要的极淡环境光。冗余纯装饰氛围可通过既有 Paint/色标 Alpha=0 视觉移除，但节点、几何、蒙版和稳定底色不变；若仍在卡顶形成暗了一块、灰带、厚重光斑或高频形状，直接 FAIL。同模式保持空间配方，已登记材质强度例外逐项核对。
 - `targetUiMode=light` 的无彩暗层审计已覆盖 `#000000`、近黑灰、低明度中性色、暗色 Effect、低明度渐变端点与主题装饰 IMAGE，并区分结构蒙版/Boolean 几何和真实输出。卡顶氛围不得出现大片黑灰、深纹理或只因 Alpha 低而放行；Icon/按钮的主体、中间调与大面积塑形暗部也不得形成低明度脏块。
 - 既有 SOLID 模糊光斑、GRADIENT、位图/滤镜、反射、底色羽化层都已分类；没有氛围的卡不凭想象新增氛围。ALPHA 蒙版灰色与 Boolean 操作数未误判为灰色表面，结构蒙版未改动。
 - 多层在同一区域重叠后仍保持干净光色，不能凭单层饱和度、低 Alpha 或两种相邻 Hue 直接通过；核对最终主体/受光区、向稳定底色消隐及邻近按钮关系，不能只有一个鲜亮像素或一条亮边。
@@ -274,7 +277,9 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ## 9. 全 Paint 与渲染残留色
 
-第一层遍历副本所有可见 Fill、Stroke、渐变色标、Effect 和低 Alpha 装饰；IMAGE Paint 使用既有分类，不得统一排除。
+先用**副本目标 Frame 的 Selection colors 或等价的全子树颜色聚合**做快速残留预筛；遍历遇到 `kvLockedSubtreeRootIds` 必须停止下钻，新 KV 原色不计为旧 UI 残留：按颜色列出 Fill、Stroke、渐变色标、带色 Effect 及文字区间的贡献节点/通道，并标记可见性、有效 Alpha、所在视觉单元和精确保护类别。逐一定位旧 UI 色在实际画面中的贡献，优先修正可编辑、非保护的残留；改后重新聚合受影响区域并取 1:1 截图。Selection colors 是候选索引，不等于渲染结果或保护判定：它可能列出被遮挡/极低 Alpha 的 Paint，也不解析 IMAGE 内部像素。不得因为颜色相同就批量覆盖内容素材、品牌色、前三名或营销创意。预筛结果和处理/排除理由进入 `finalAudit.residualColorAudit`，随后仍执行下列完整双层审计。
+
+第一层遍历副本 UI 范围所有可见 Fill、Stroke、渐变色标、Effect 和低 Alpha 装饰，排除 KV 锁定子树；IMAGE Paint 使用既有分类，不得统一排除。
 
 第二层检查整页和关键局部截图的实际像素，重点看：圆角/边缘细线、标题装饰、状态底色、异形容器、Icon 内部、KV 接缝和主题装饰位图。
 
@@ -297,10 +302,10 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 必须主动判断：
 
 - 页面实际重量是否符合 `targetSurfaceDepth`，未被主体高光漂白或边缘暗部压黑。
-- 页面、卡片、容器层级清楚，且与 KV 稳定环境属于同一视觉世界。
+- 页面、卡片、容器层级清楚，且与 KV 稳定环境属于同一视觉世界；浅色撞色方案的卡片足够接近白色，未被不必要的高 S 主题底色染脏。
 - 全局/局部第一焦点符合 `targetSalienceOrder`。
 - 页面达到 `colorClarityPlan` 的实际彩度、明度、受光感与对比度目标：主题色彩有力度、视觉重量符合 KV、各层清楚、主要操作突出、状态可辨；按钮合成后主体颜色与材质层次成立，整页关系美观协调。
-- 标题、Icon、Tab、小按钮和 CTA 各有独立角色，没有共享同一渐变；普通 Icon 底托、选中 Tab、主要按钮/CTA 的颜色显著性依次增强，没有倒置或挤成同一等级。
+- 标题、Icon、Tab、小按钮和 CTA 各有独立角色，没有共享同一渐变；Icon 图形与底托成组后没有底托偏重、渐变塌缩成纯色或整页重复抢焦点；普通 Icon 底托、选中 Tab、主要按钮/CTA 的颜色显著性依次增强，没有倒置或挤成同一等级。
 - 整页没有旧主题残色、廉价材质、多色扩散、透明叠层 Bug 或明显审美冲突。
 
 任一视图失败都不能用数值合格覆盖；返回对应阶段修正。
@@ -315,6 +320,7 @@ sourceIntegrity
 cloneStructure
 kvReplacement
 kvFitAudit
+kvLockedSubtreeAudit
 heroBottomExtensionAudit
 paintPresenceMask
 visualSurfaceCarrier
@@ -326,18 +332,21 @@ colorRelationAudit
 themeColorConsistencyAudit
 schemeAnchorConformanceAudit
 iconMaterialAudit
+iconPairAudit
 interactionSalienceAudit
 colorClarityAudit
 hsbGuardrailAudit
 buttonCompositeAudit
 disabledButtonOpacityAudit
 labelReadabilityAudit
+cardSurfaceAudit
 cardAtmosphereAudit
 styleAdaptationAudit
 protectedHeroControlsAudit
 protectedMediaAudit
 protectedRankTop3Audit
 instanceCoverageAudit
+colorBindingAudit
 paintResidualAudit
 renderedResidualAudit
 fiveViewVisualAudit
