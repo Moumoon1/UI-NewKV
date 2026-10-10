@@ -1,6 +1,8 @@
 # 验收规则
 
-Phase 3 冻结适用规则时读取检查分类与第 11 节闸门清单；Phase 7 读取全部适用检查。本文件定义检查方法、PASS/FAIL、带证据的警告和回退阶段；可在授权范围内解决的问题必须在同一副本自动修正并重新验收，不向用户索要方案选择。
+Phase 3 冻结适用规则时读取检查分类与第 11 节闸门清单；Phase 5 对本地 `expectedClone` 运行预检，Phase 7 用唯一最终证据运行全部适用检查。本文件定义 PASS/FAIL 与带证据警告；最终失败记录未完成及失败证据，在已确认方案与原授权范围内按执行工具契约继续有界修复；不以旧 PASS 覆盖新失败。
+
+下文 `FAIL → Phase N` 表示返回相应计划/验收责任点。写入前修正本地投影；真实终审失败后按《执行契约》的有界修复继续推进。每个冻结事务独立预检、批量写入和终审，禁止盲目重放或沿用旧 PASS，不要求用户再次授权范围内修复。
 
 启用 `style-adaptation` 时，结构、Paint 存在性、素材和原材质保持检查只对[《画风迁移规则》](style-adaptation.md)中逐项登记的外观差异适用例外，转由 `styleAdaptationAudit` 验收。其他节点与所有业务/精确保护规则不变。
 
@@ -10,26 +12,23 @@ Phase 3 冻结适用规则时读取检查分类与第 11 节闸门清单；Phase
 
 ```text
 inspect → kv-style-check → kv-analysis → palette-proposal
-→ palette-selected(user) → preflight → clone-and-kv
-→ representative-trial → trial-review(pass)
-→ expand → audit
+→ palette-selected(user) → source-audit-full(one-read)
+→ offline-plan → offline-preflight(pass)
+→ single-batch-write → final-review(one) → audit
 ```
 
 必须先按[《执行工具》第 5 节](execution-workflow.md#5-执行覆盖严格验收与性能)核对冻结规则、全量颜色清单和完成目标，再证明：
 
 - `kvStyleComparison` 在配色方案与任何写入前完成，包含新旧 KV 的画风差异证据及原 UI 冲突检查；模式不是仅由颜色、IP 更换或深浅变化触发。
 
-- `preflightThemeDecision=pass` 早于首次 UI 写色。
-- `sourceKvTone/sourceUiMode/targetKvTone` 均有独立证据；`paletteProposal` 的数量与角色符合《配色方案提案》，每套在展示前已绑定表面家族、`accentFamilyPlan`、`cardSurfaceStrategy`、`iconPairPlan`、目标显著性/明度拓扑、彩度/受光目标、面积化预览证据及 `proposalColorPreflight=pass`；`paletteSelection` 有用户明确选择，最终 `targetUiMode/hueStrategy` 与所选方案一致。最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖；`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式。
-- `representativeNodeIds` 早于代表试色产生。
-- `representativeCoverage` 覆盖全部非等价按钮/氛围材质、状态及需要不同方案的背景；全页实际实例清单与最终上下文核对数量一致，不能只验一类代表。
-- `representativeMutatedNodeIds` 只包含完整场景的白名单、必要后代及预登记共享背景通道；只读依赖不等于写权限。
-- `trialGates` 有各场景真实上下文的 1:1、灰度、模糊和缩略图证据，整页图只作上下文检查；未扩展旧皮肤不在 Phase 5 冒充整页残留或美观 FAIL/PASS。
-- 按[《局部试色与执行工具》](execution-workflow.md)第 2 节核对每批扩展对应的配方/依赖/映射指纹，门禁在该次写入前有效；历史 `trialGateStatus=pass` 不独立构成凭证。共享依赖变化后的相关实例均已更新和重验，无过期门禁。
-- `expansionMutatedNodeIds` 来自后续独立写入调用。
-- `buttonCompositeReview` 中声称已试色的版本均有同一副本、同一代表白名单的实际写入与截图记录；修正或比较结束后实际 Paint 对应最终选中版本。
+- `preflightThemeDecision=pass` 与 `offlinePreflight=pass` 均早于唯一 UI 写入。
+- `sourceKvTone/sourceUiMode/targetKvTone` 均有独立证据；`paletteProposal` 的基础交互覆盖与背景备选符合《配色方案提案》，核对背景来源、可比面积预览及淘汰依据；多个可行背景不能只给同背景的按钮对照。每套在展示前已绑定表面家族、`accentFamilyPlan`、`cardSurfaceStrategy`、`iconPairPlan`、目标显著性/明度拓扑、彩度/受光目标、面积化预览证据及 `proposalColorPreflight=pass`；`paletteSelection` 有用户明确选择，最终 `targetUiMode/hueStrategy` 与所选方案一致。最终主要 UI 表面实际呈现该模式，不能只改字段或被 KV 推断覆盖；`themeTransition` 由原稿与最终目标模式计算，相关 Icon／按钮及氛围规则使用同一模式。
+- 唯一完整原稿快照覆盖全部非等价按钮/氛围材质、内部容器、Icon、状态及背景；所有映射、配方和 `expectedClone` 均引用同一快照哈希。
+- `iconGlyphPlan`、`materialRelationPlan`、表面合成关系、`stateGroupId/emphasisOrders` 和全量 `colorManifest` 在写入前完成并通过机器预检。
+- `singleWriteReceipt` 来自唯一写入调用，计划数与完成数一致，没有部分失败、白名单外写入、变量回弹或 KV 锁定子树命中。
+- `finalReviewReceipt` 来自唯一终审调用，包含原稿不变指纹、完整副本快照、整页图和全部预登记 1:1 细节图；灰度、模糊、缩略图和并排裁图从这些证据本地派生。
 
-任何事后补记、代表试色和全页扩展同调用、白名单外写入、过期门禁或缺少证据均为 `FAIL → Phase 4/5`。合法恢复/局部回退应追加实际事件并重验受影响依赖，不要求重做 clone。批次异常有新鲜读回和完成/待写/冲突分类，无未解决冲突；属性工具通过不能替代视觉通过。
+任何事后补记、为同一未变原稿反复读取整树、同一冻结事务分段现场写入、未经预检/预演的修正、白名单外写入或缺少证据均为 FAIL。符合执行契约的有界修复单独记录事务及真实调用数；交互式现场试色仍须用户明确要求。属性工具通过不能替代视觉通过。
 
 ## 2. 原稿与副本结构
 
@@ -44,7 +43,7 @@ inspect → kv-style-check → kv-analysis → palette-proposal
 副本根 x
 指定 KV IMAGE Paint 内容
 kvFitPlan 白名单内的 KV IMAGE scaleMode/imageTransform 与专用载体 x/y/width/height
-kvFitPlan 内最多一个绝对定位主图载体、一个环境补底节点或 Fill
+kvFitPlan 内最多一个绝对定位主图载体、一个环境补底节点或 Fill，以及第 5 节登记的最多一个独立接缝融合节点（或复用接缝载体的精确差异）
 启用独立主图载体后指定旧 KV Paint Alpha=0
 mutationPlan 内颜色和 Paint Alpha
 按《文字换色与恢复》逐项登记的普通 TEXT 自身 Alpha 覆盖（非状态/祖先/保护）
@@ -71,18 +70,18 @@ light-to-dark 收益卡最多一个底部氛围 Fill
 
 - 副本实际显示用户的新 KV，原稿仍显示旧 KV。
 - `sourceVisualUnitType` 分类正确；若为 `composite-kv`，最终使用完整指定视觉单元或完整导出兜底，不是其中某个内层 IMAGE。整组原设计宽高、内部相对几何、裁切、文字、素材与 Paint 指纹保持。
-- `kvLockedSubtreeRootIds` 与 Phase 4 冻结值一致；UI 颜色解绑、代表试色、区域写入、旧色扫描和自动修正的目标集合均与锁定子树零交集。最终内部 Paint、文字、素材、渐变、绑定与相对几何指纹必须完全一致；发生过误写后再调回也不能沿用旧 PASS，须由冻结快照重新证明零差异。
+- `kvLockedSubtreeRootIds` 与写入计划冻结值一致；UI 颜色解绑、批量写入和残留扫描的目标集合均与锁定子树零交集。最终内部 Paint、文字、素材、渐变、绑定与相对几何指纹必须完全一致。
 - `directFitCheck` 证明先检查了原尺寸/同宽使用；本可直接放入却人为缩小、为导航预留整圈边距，或随后补画构图，均为 FAIL。真实裁切导致的必要等比适配应有边界与截图证据。
 - Hero 外框位置、尺寸、裁切、圆角、Auto Layout 占位及下方 UI 起点不变；图片适配策略和 KV 专属载体只按白名单变更。
 - 默认保留原 KV 设计尺寸或页面同宽尺度，宽高比正确，允许超高部分仅从下方截去；不能为了完整显示尾部而整体缩小。记录实际可见/截去区域及标题、Logo、主体是否可见，关键内容意外被切须修正定位并复验。只有用户明确要求完整显示时，contain 分支要求整图四边完整。
 - 新 KV 内置底部纯色/渐变的类型、`gradientTransform`、色标位置/Alpha、方向和实际终点与源复合视觉单元一致；页面延伸从真实终点继续。不得翻转或重建方向，不得叠加旧接缝造成断层。普通重着色只改计划内色值/Alpha，任何 transform 或色标位置变化均须有独立授权与前后证据。
 - 实际截图确认主图经过全部祖先 clip/蒙版后符合已登记的尺度与下方裁切策略；contain 分支仍须整图完整；只设置 `FIT`、只检查节点边界或只比较 imageHash 均不足以通过。
-- contain 留白/透明处没有旧图透出；必要环境补底来自新 KV 稳定环境色，位于主图后方且不越出 Hero，没有重复标题/主体或新造内容。无留白则无需补底。
+- contain 留白/透明处没有旧图透出；必要环境补底来自新 KV 稳定环境色，位于主图后方且不越出 Hero，没有重复标题/主体或新造内容。无留白则无需补底；杂色图像下缘需要融合时，独立接缝层按《Figma 执行规范》第 5 节验收，不受“补底在主图后方”限制。
 - `protected-hero-controls` 按真实 `themeTransition` 逐节点核对：同模式全部外观样式精确保留，颜色变量/样式引用只在副本解除且不得改变有效显示色；跨模式仅《Figma 执行规范》第 5.4 节预登记的前景及必要底托通道可适配，读回校验目标值及必要性证据。未登记外观、几何、字体、文案、素材、状态、节点/祖先 Alpha 保持，不新增底板或间接覆盖。实际新 KV 宿主上的可辨性与第 5.1 节适用的对比度策略仍必验；跨模式不机械追平原稿比值。记为 `protectedHeroControlsAudit`，不存在时带证据记不适用。
 - `kv-asset-subtree` 仅隐藏已经烘焙进新 KV 的旧视觉资产；倒计时、规则、状态、导航等 `hero-adjacent-ui` 仍可见可读。
 - 每个 IMAGE Paint 已分类；内容、品牌素材与未知图片哈希未改变。
 
-将上述结果记为 `finalAudit.kvFitAudit`。仅用户明确要求完整显示时，任何比例均可使用 contain；比例差异、留白或低源分辨率本身不判失败，源清晰度如实记录。只替换 imageHash 但截图仍显示旧 KV、存在非计划的祖先裁切、功能 UI 被遮挡/位移，或误改内容图片，`FAIL → Phase 4/6`，在同一副本自动修正适配，不因重设裁切/定位请求审批。
+将上述结果记为 `finalAudit.kvFitAudit`。仅用户明确要求完整显示时，任何比例均可使用 contain；比例差异、留白或低源分辨率本身不判失败，源清晰度如实记录。只替换 imageHash 但截图仍显示旧 KV、存在非计划裁切、功能 UI 被遮挡/位移，或误改内容图片，直接 FAIL；终审阶段不自动改副本。
 
 ## 4. Paint 与视觉承载层
 
@@ -98,6 +97,8 @@ light-to-dark 收益卡最多一个底部氛围 Fill
 跨模式差异必须只出现在计划内节点并符合对应氛围矩阵。任何承载层漏改或无授权新增 Paint，`FAIL → Phase 1/6`。
 
 ## 5. 文字与对比度
+
+先执行 `textRangeCoverageAudit`：由完整快照枚举每个可见 TEXT 的 `textRuns.fills`，逐节点比较 `textRangePlan`。区间起止、全部颜色通道、处理结论、真实宿主和对比度关系必须一一覆盖；节点级 Fill、代表色、Selection colors 或整段文字截图不能替代。非保护区间必须进入 `readability` 的节点范围；精确保护区间核对真实保护子树，媒体卡祖先不能把封面外文字扩大保护。跨深浅模式的每个可见非保护区间须有包含实际宿主的明确关系和 `minimumContrast >= 3`，缺少、过期或只写 `measured` 均 FAIL。机器底线通过后仍检查真实字号、字重、长度和层级；肉眼仍淡、像水印或状态不清楚时继续 FAIL。
 
 对比度使用最终显示 RGB 和逐层合成背景：
 
@@ -136,11 +137,23 @@ Phase 3 冻结 `contrastPolicy=source-baseline/contextual` 与 sourceUiMode、ta
 
 Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关系；Phase 3 将 ID、类型、节点范围与采样职责冻结进 `contrast-baseline` 机器规则的 verifier。覆盖文字/关键数据对宿主、页面/卡片/内部容器之间、Tab 选中与未选中表面、指示条对底色、功能 Icon 图形对底托、按钮/CTA 主体对宿主及标签对主体。精确保护对象仍保留原值，但其真实宿主变化也需核查并如实记录冲突。装饰高光与材料内部塑形色标不逐个升级为业务对比关系；实际不存在或无可见边界的关系在预检附读取依据，不在验收时删掉失败关系。
 
+先运行 `surface-system` 机器门禁：发现阶段枚举全部可见非文字 Fill，不以宽高或面积决定审核资格；语义上属于表面的节点及每张卡内全部可见非文字 Fill 必须进入 `surfaceSystemPlan` 并按真实职责分类。每个同级卡片稳定底板恰好进入一个 `cardBaseGroup`，新稿组内 ΔE76 跨度不得超过原稿跨度加写入前冻结且不大于 3 的余量。每张非根页面/卡片/容器都须绑定真实宿主和非零表面关系；确认为卡内 `container` 后强制 `minimumDeltaE >= 4`，浅色 UI 另须冻结 `maximumDeltaE`。所有裁切越界及非根页面底部终点须绑定新鲜 1:1 `displayed-relations`。这一门禁失败时，文字可读、单卡局部好看或人工填写视觉 PASS 均不得覆盖。
+
+同时核对 manifest 与 `surfaceSystemPlan` 的角色一致、源同色卡片稳定底/Chrome 基底的目标同色，以及裁切采样是否真实跨过发现边线。`continuous/fade` 使用大于 `16/255` 的宽松阈值、根角落占位坐标、或把 `surface.container` 改叫 `decoration`，均直接 FAIL。
+
+分类时必须查看 `candidateGeometryEvidence`：相对真实卡片的宽/高/面积占比、四边内缩、左右对称和常见 8/12/16px 及更大内容间距命中。高覆盖、对称内缩并承载主要内容时应优先判定为内容容器；这些指标只增强判断，不允许用未命中某个数值把候选移出清单。
+
+跨模式的 `surface` 关系必须冻结并验证最终合成色的 `minimumDeltaE >= 3`；按原稿职责确认为 `container` 的内部容器、分组标题底、进度面板等使用 `minimumDeltaE >= 4`，除非原稿明确把它设计为连续无边界表面。这里比较真实 Paint、节点和祖先 Alpha 合成后的颜色，不比较裸 Fill。3% 等旧暗色外观 Alpha 在浅底上造成近乎消失时必须重算，不能以“色值不同”通过。
+
+浅色 UI 中只承担轻度分组职责的内层容器，还须在冻结关系中设置由显著性计划和原生试色支持的 `maximumDeltaE`，与最小可辨值形成区间。`contrast_audit.py` 对每个真实合成样本同时核验上下界；仅达到最小色差、却让大量重复容器显得深、灰、脏，仍为视觉 FAIL。上限不机械套给按钮、选中态或有明确业务强调的面；例外须写明职责和真实尺寸证据。
+
 每个关系按实际材质/状态/宿主选择最少完整代表，登记全部实例→代表映射；非等价上下文分别比较，最终逐实例核对。记录相同角色、相同采样职责的源/新合成颜色与未四舍五入的比值。纯色 NORMAL 叠层可由快照中真实 RGB(A)、Paint/节点/祖先 Alpha 自下而上计算，不能漏掉宿主或重复乘 Alpha；复杂渐变、混合、IMAGE 和氛围采用真实 1:1 截图，保存坐标、像素比例、哈希与取样依据，排除字形边缘/抗锯齿。文字可用完整 Paint 与真实背景计算，不能从细字的抗锯齿像素推算全文颜色。
 
 可辨性分别进入 `readability/surface-discernibility/state-discernibility` 的冻结视觉检查，逐实例范围独立覆盖，不能用一项的 PASS 代替另一项。
 
 对比度只表示差异大小，不表示强调顺序。原稿中确实可比较、共享同一实际背景与采样职责的强弱关系，另建 `emphasisOrders`（格式见执行工具第 4.7 节）：比较强成员/弱成员各自对宿主的对比度之比，新稿须仍大于 1；仅 source-baseline 另要求不低于原稿的相对力度。适用的比值门槛与相对强弱不倒置同时通过，不能互相替代。不能把不同宿主、不同职责、窄装饰亮边或整个 CTA 的业务权重硬塞为同背景比值；多信号状态和材料层次仍以完整视觉单元验收。原稿没有该种顺序时不虚构数值约束，但不豁免真实状态层级。
+
+所有 `kind=state` 的关系必须带同一组件内稳定的 `stateGroupId`。审计从原稿样本自动比较组内成员：只要共享同一宿主/采样职责且源比值不相等，每一对强弱都必须出现在 `emphasisOrders`；缺一对即输入不完整，不允许靠人工代表抽样通过。进度节点、奖励标签、完成/未完成、选中/未选中应分别覆盖其实际视觉载体；目标组全部同色或同强度会直接导致顺序失败。
 
 同模式通常延续原稿的表面/材质明暗分工；跨模式或有依据的目标配方可以调整明暗方向，写入前明确作用与范围。高光仍承担受光、暗部仍承担塑形，选中信号与操作优先级不能倒置。原稿同色/接近的同族卡片仍延续相近基础表面，收益卡的光影差异不自动成为强反差深色底板。不能统一要求所有选中态变深或所有按钮变亮。
 
@@ -152,7 +165,11 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ### 关系验收不得自证
 
+**截图差异与验收结论分开。** 截图逐像素比较必须检查 RGB 与 Alpha 全通道；RGBA 差分默认只检查 Alpha 的 `getbbox()` 会漏掉两张不透明图的颜色差异。严格像素比较失败时保留失败结果，不改写为“完全一致”，也不得为追求零差异反复重建整页。只有完整结构、Paint（含 Alpha/材质）、文字区间、保护范围和角色审查均通过，且已逐点检查全部差异坐标，确认仅是孤立边缘采样差异、没有可见位移/色块/文字缺损时，才可另记 `pass-with-warnings`；记录图片哈希、差异数量、最大通道差、坐标及局部对照，完成回复明确非逐像素一致。此例外不覆盖成片差异、稳定色底变化、漏色或用户仍指出的视觉错误。
+
 最终关系复查回到原稿/新稿截图与用户规则，不把色板、已执行计划或此前 PASS 作为正确性的依据。至少核查实际存在的三类反证：
+
+视觉检查记录应先写实际观察到的颜色、边界和层级，再引用对应角色规则得出结论。针对用户点名的失败区域，列出整个视觉单元的承载层，而不仅是本轮修改节点；逐项复核 Icon 主体/底托/卡片、标题稳定底/氛围/裁切、收益通知栏/前后卡片及同族 Tab。公开锚点在某一通道命中、图形还有轮廓或最终与预演一致，都不能单独使上述关系通过。用户要求整体重做时，旧视觉 PASS 全部失效。
 
 - 同族主要小按钮与 CTA 并排看彩色及灰度主体，是否一个明显重深、另一个轻浅，或主体色系漂移；检查现有渐变、反射与各自宿主，而不以 CTA 尺寸更大、文字清楚或同属暖色放行。全实例范围及主体 L*/色差进入 `button-appearance-family`，接受条件见颜色规则第 1、8 节。
 - 连续 Tab 与内容区沿真实接缝查看最终合成颜色，是否外层一致但深层底板断色；用对应原生空白像素核验，不能仅比较裸 RGB 或文案。跨卡片同层级同状态 Tab 再并排查看完整状态语言。
@@ -172,7 +189,7 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 2. 将 KV 原始区域与最终页面背景、卡片、容器和主要按钮/CTA 并排看彩色 1:1。分开记录原 Paint RGB、最终合成代表样本与冷暖/色相倾向；不要从字形抗锯齿、亮边或最鲜艳像素取代表色。按 `surfaceFamilyPlan.hueRelationshipPlan` 检查：默认同一或相近色相家族，明度、彩度与材质仍须形成可辨层次和醒目操作，不能要求按钮与背景同 Hex。
 3. 检查深浅转换后的环境家族是否仍成立，已有氛围/纹理/反射有没有把大面积颜色带偏。无金属 `contrast` 方案核对可靠 `surfaceContrastBasis`、约 180° 对向候选与 KV 高彩高明度候选的比较、`contrastDerivation=hue-opposition|kv-vivid-accent` 及可见色相分离；同一 Hue 仅深浅不同不能通过。金属方案核对 `metalAccentEvidence` 和 `buttonVariant`：`metallic-analogous` 对应本次金属家族，`gold-bright` 的主体中间调为正常明亮金黄且高彩度、受光面积充分，并落在类似 `#FFEED7→#FFC58A`、`#FFEEC6→#F9DB92`、`#FFE5A3→#FFC165` 的暖亮视觉范围而非机械固定值；`clean-deep` 有来源且不灰黑暗沉。暗铜、棕橙、土黄、只靠窄高光显金，或为迁就白字而压暗的 `gold-bright` 直接 FAIL。背景和卡片须保持已声明的连续环境家族，Tab 保持表面同系；功能 Icon 图形引用或有依据地派生自 `schemeAnchorContract.icon`，主要小按钮与 CTA 共同引用 `schemeAnchorContract.button`，不能出现黄/橙等可见分裂。同时检查 Icon/按钮与 KV/真实宿主是否协调。
 4. 生成 `schemeAnchorConformanceAudit`：`background/card/number/icon/button/tab` 六个公开锚点都至少有一个稳定可见 `anchorId` 通道，实际目标 RGB 与用户选定方案逐通道一致。Tab 的主要选中底板不得改绑按钮/Icon 色，按钮/Icon/数字也不得只保持“同色系”却换掉代表值。锚点缺失、错绑或实际读回漂移直接 FAIL；若确需改变公开值，返回 Phase 2 重新展示并等待用户确认。
-5. 核对 `accentFamilyPlan` 与最终稳定主体：普通功能 Icon 的稳定主体从背景/卡片的连续环境家族提取，不从孤立反光或按钮色倒推；深色 UI 的公开 `number` 与 `icon` 必须同 Hex/RGB，且高亮数字、Icon 的可见代表区域分别兑现该锚点。按钮可保留第二强调家族；浅色 UI 的数字可独立，但数字/Icon/按钮默认仍不超过两个显著高彩家族，第三家族只在事先有主题级 KV/业务/用户证据时例外。用彩色 1:1、模糊图及缩略图看重复 Icon 是否堆出新的焦点；小面积金属反射可有不同光色，但不得让它成为 Icon 主体。发现漂移时若六色公开锚点已经用户确认，不能静默改 Hex，须返回 Phase 2 重新展示受影响方案并确认。
+5. 核对 `accentFamilyPlan` 与最终稳定主体：普通功能 Icon 的稳定主体从背景/卡片的连续环境家族提取，不从孤立反光或按钮色倒推；深色 UI 的公开 `number` 与 `icon` 必须同 Hex/RGB，且绑定公开锚点的数字、Icon 的可见代表区域分别兑现该锚点。按钮可保留第二强调家族；浅色 UI 的数字可独立，但数字/Icon/按钮默认仍不超过两个显著高彩家族，第三家族只在事先有主题级 KV/业务/用户证据时例外。任务/作品卡的 `taskWorkDataAccent` 属于《颜色决策规则》第 6.1 节明确的用户偏好例外：检查其预先登记的载体、配方和饱和度/明亮度依据，不将它误绑定公开 number 锚点或要求 Icon 随之变红。用彩色 1:1、模糊图及缩略图看重复 Icon 是否堆出新的焦点；小面积金属反射可有不同光色，但不得让它成为 Icon 主体。发现漂移时若六色公开锚点已经用户确认，不能静默改 Hex，须返回 Phase 2 重新展示受影响方案并确认。
 6. 彩色模糊图与缩略图检查全页累计色彩面积：主家族仍须主导，局部植被/反光/强调色不能经过大面积和高频重复成为无依据的第二主底色；撞色方案仍须清楚呈现反差和面积主次。灰度用于明暗，不能代替这项彩色检查。
 
 记录锚点、实际节点/区域、截图、合成贡献与结论。真实家族漂移或关键疑点未验证时为 `FAIL → Phase 3/5/6`；返回受影响配方并使相关门禁失效。文字可读、目标通道数值正确及原稿关系一致均不能覆盖该 FAIL。
@@ -193,12 +210,13 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ### 关键数据
 
-所有 KV 下，金额及任务/作品的强调数字按《颜色决策规则》第 6.1–6.2 节验收：颜色鲜明、突出、清晰，不因字号小而自动压暗为灰闷中间色。浅色 UI 的顶部收益卡可选鲜亮或干净深色；深色 UI 的高亮数字必须兑现 `number=icon` 共同锚点，不能为适配局部宿主临时产生第三色。逐文字区间记录真实可读性与强调效果；仅启用严格标准时附对应标准结果，数值较高不能覆盖强调不足、灰闷或融入正文的失败。
+所有 KV 下，金额及任务/作品的强调数字按《颜色决策规则》第 6.1–6.2 节验收：颜色鲜明、突出、清晰，不因字号小而自动压暗为灰闷中间色。浅色 UI 的顶部收益卡可选鲜亮或干净深色；深色 UI 中绑定公开 number 的数字（包括顶部收益卡）必须兑现 `number=icon` 共同锚点，不能为适配局部宿主临时产生第三色。先核对任务/作品卡局部配方确实属于副文案，且原数字相对同段周围文字已有字重或颜色区别；仅有金额语义、整行加粗或换肤后新增红色不算源证据。符合条件的既有局部强调数字优先使用 #FF5839 / #FA1D32 / #F73B68 或饱和度与明亮度相近的微调色，按第 6.1 节核对实际宿主清晰度、原强调区间及同类数字一致性，不套用顶部收益卡的共同锚点限制。逐文字区间记录真实可读性与强调效果；仅启用严格标准时附对应标准结果，数值较高不能覆盖强调不足、灰闷或融入正文的失败。
 
 ### Tab
 
 - `control-family-consistency` 独立验收跨区域同族控件：内容分类 Tab、榜单 Tab 等按层级/状态配对看原稿与新稿，共同目标配方及登记变体均实际读回并在真实宿主验证。同族原本同色却因卡片划分被拆色，或虽局部可辨但跨区域色彩语言明显漂移，均 FAIL。不同层级/状态不要求全部一个 RGB；源 RGB 不同但应共用新配方时用目标值校验。该规则 scope 覆盖全部相关控件根，需一次完整跨区域比较，不拼接各卡片单独的 PASS。
 - 核对 `sourceColorRelations` 的原稿关系、预先登记的语义拆分及实际读回结果，生成 `colorRelationAudit`。原稿连续同色底板不能因节点类型不同而拆色；同色文字的状态 Alpha、前后表面差异及指示条角色按《颜色决策规则》第 9 节复核。查看原稿与结果的 1:1 对照，不能只验文字或旧色残留。
+- `colorRelationAudit.automaticSourceEquivalenceGroups` 必须覆盖 manifest 中全部可换肤、源 sRGB8 相同的颜色通道且全部 PASS；目标色须在语义组或预先冻结的合法分区级决定一次。未作语义分区且自动组同时含有表面和非表面角色时，必须有路径全集一致的 `surface-linked-equivalence` 计划，以组内真实表面通道为锚点并使用 `surface-recipe`；缺失或锚到 Icon、描边、文字配方直接 FAIL。原稿 1:1 看起来相同但存储值不同的元素必须另有 `source-appearance-equivalence` 显示等价组；横跨表面与非表面时改用 `surface-linked-appearance` 并冻结表面采样锚点。源样本 L*/ΔE76 跨度均不大于 2，目标不超过源稿且无附加余量。未登记、缺原稿依据、漏路径/重复路径、同职责拆组、表面成员拆散或绕过显式等价关系的分区均 FAIL。独立源职责的合法分区由执行者自主决定，不要求用户重复确认；不能从目标失败反推分区。
 - 一级/二级 Tab 在实际尺寸下一眼可辨；Tab＋连续容器与外卡、选中/未选中底色、指示条与底色、文字与底色分别通过原稿基线检查，不合并为一个文字比值。
 - 现有结构支持时优先使用两类选中信号；只有单一状态载体时按《颜色决策规则》第 9 节验证一类明确、稳定的信号，不为数量新增结构。
 - 选中态纯色方向弱于邻近主要按钮，不使用大范围材质渐变。
@@ -209,14 +227,14 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ### Icon
 
-- 每张卡片先用 `titlePaintInventory` 与 `iconGlyphInventory` 和全量颜色通道清单逐路径做差集：标题 TEXT 的可见 Fill、文字区间、各渐变色标、Stroke、颜色 Effect 及标题装饰；Icon 图形本体的 Vector/Boolean/IMAGE、描边、材质色标，以及独立底托。所有非保护可编辑通道都要有目标配方和新鲜读回；只改卡片底色、标题光晕或 Icon 底托而本体保留旧色，直接 FAIL。位图图形若不可安全换色须保持 `raster-blocked` 并报告，不能靠叠加假图形/按钮将其记为完成。对照 1:1 原稿与新稿，缩小整页图不能代替逐层验收。
+- 每张卡片先用 `titlePaintInventory`、`iconGlyphPlan` 与全量颜色通道清单逐路径做差集：标题 TEXT 的可见 Fill、文字区间、各渐变色标、Stroke、颜色 Effect 及标题装饰；Icon 图形本体的 Vector/Boolean/IMAGE、描边、材质色标，以及独立底托。运行 `icon-glyph-coverage`，所有可见通道必须且只能出现一次；图形通道默认 `change`，只有 `themeNeutral=true` 且有可复验中性证据才可 `preserve`。只改卡片底色、标题光晕或 Icon 底托而本体保留旧色，直接 FAIL。位图图形若不可安全换色须保持 `raster-blocked` 并报告，不能靠叠加假图形/按钮将其记为完成。对照 1:1 原稿与新稿，缩小整页图不能代替逐层验收。
 - 所有需换肤功能 Icon 的 Fill 与 Stroke 均进入新主题，并引用或有依据地派生自 `schemeAnchorContract.icon`；稳定主体遵守 `accentFamilyPlan`，在真实底托上清楚，已有金属明暗与局部反射不塌缩。媒体/Logo/图片 Icon 与前三名受保护名次图形未改。
 - Icon 容器是 `Icon 底托 < 选中 Tab < 主要按钮/CTA` 中最轻的一层，同时弱于 Icon 图形；不能直接复用 Tab 或高饱和按钮色后仅降低节点 Alpha 来伪造层级。
 - 存在局部 Icon 底托时，按《颜色决策规则》第 7.1 节核对 `iconMaterialRecipe.container` 与 `iconPairPlan`：有独立颜色来源、图形/底托/卡片关系与渐变职责；图形和底托在同一真实单元中联合选择，没有以“主色加白”代替判断，也没有为追求异色任意增加新色。允许有依据的辅助色、材质色或中性色，同主色不是验收条件。
 - 图形、按钮与普通辅助底托均未被全模式 S/V 锁定；第 3.2 节浅→浅基线的适用范围明确，未扩大到其他宿主或底托，也未在视觉失败时被当成硬约束；无彩源底没有因原 `S=0` 被机械映射为统一中性色或统一 V。分别检查实际底托与卡片的冷暖/色相关系、图形与底托的承托关系，不能仅凭轮廓清楚通过；确属明确锁定项或保护项的底托有职责依据。
 - 实际尺寸下图形清楚，底托起到承托作用；整页重复排列的视觉权重合理，同族配方一致或变体有依据。底托可有柔和消隐边缘，不要求所有边界都强描边；同色混融或异色割裂时有针对性的试色修正。原渐变结构与透明度规则未因模仿参考而突破，前三名底托仍完全保留原 UI 配色。
 - 多层 Icon 保留可感知明暗层次及原高光位置、方向和覆盖范围，仅在第 3.2 节浅→浅基线真实通过并决定沿用，或明确通道锁定适用时保持原 S/V，其他情况不锁定数值跨度；不同 Paint 没有被写成相同渐变或相近暗色。
-- 原稿所有功能 Icon 的可见渐变（不限金属）在代表试色与最终全实例上执行 `scripts/material_stop_audit.py`；原有不同 RGB 或饱和度职责的色标塌缩为同一 RGB/同一 S 关系时，`iconMaterialAudit=FAIL → Phase 3/5/6`，先修色标角色并重新查看原生尺寸。无塌缩只通过这项确定性检查，仍须由真实截图证明受光面、镜面带和暗端可感知；不能把脚本 PASS 当作材质 PASS。
+- 原稿所有功能 Icon 的可见渐变（不限金属）在 `expectedClone` 和最终真实副本上执行 `scripts/material_relation_audit.py` 与 `scripts/material_stop_audit.py`；原有不同 RGB、饱和度或重复角色组塌缩时直接 FAIL。无塌缩只通过确定性检查，仍须由最终 1:1 截图证明受光面、镜面带和暗端可感知。
 - 实际尺寸下受光面、阴影、高光各自可感知；没有以层数相同或少量亮边代替材质成立的证据。参考图片的立体效果未被误报为目标矢量 Icon 已实现的效果。
 - Icon 图形与容器、文字、按钮清楚区分，没有发闷、过深、材质消失或重复抢焦点；同一 1:1 截图明确排除了 `gradient-stop-collapse / container-too-heavy / pair-low-separation / pair-over-salient`。
 - `targetUiMode=light` 时，普通功能 Icon 底托须淡淡带有一层协调颜色，并明显弱于选中 Tab；但低强调不等于不可见，在 1:1 下临时忽略图形时，底托轮廓/表面仍须与卡片分离。实际尺寸、灰度、模糊和整页重复中不得暗沉、形成沉重色块或高频暗点，也不得融入卡片像缺少底托。不设固定明度差；底托过暗、过淡消失、接近 Tab 强度或因高频重复累计压过 Tab，均不能用“弱于按钮”或“图形还能看清”放行。
@@ -246,13 +264,17 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ## 7. 卡片氛围与材质
 
+跨深浅模式先执行 `crossModeCompositeCoverageAudit`：`crossModeCompositePlan` 必须覆盖所有有效 Alpha、全部可见文字区间、卡片氛围和渐变色标，并精确枚举源 Alpha 贡献。外观层不得标成结构保留，普通内容不得标成状态保留；每个重算/视觉移除项都有真实宿主、目标合成证据及 1:1 场景。渐变与氛围节点全部进入 `boundaryGroups` 和 `surface-continuity` 范围，沿接缝及首尾检查分界线、暗尾、灰带和亮度突跳。遗漏任一候选或仅保留旧百分比而无新宿主证据，直接 FAIL。
+
 - 氛围只使用 `cardAtmospherePalette` 的环境色及邻近色；不含标题、人物、箭头、Logo、金属包边、按钮色或局部反光。
 - 氛围位置符合《颜色决策规则》第 5 节的默认锚点或有依据的原空间家族；不为套位置规则移动图层。
 - 先核对浅色撞色方案的 `cardSurfaceStrategy`：`tinted-near-white` 的稳定底明显降低 S 并提高明度，`pure-white-atmosphere` 的稳定底为纯白且主题色只留在原有顶部氛围/Chrome；页面↔卡片边界仍清楚，卡片没有因主题染色显脏。再按《颜色决策规则》第 5 节矩阵逐卡核对实际 `themeTransition`、稳定底色与完整氛围叠层：`light-to-dark` 有可感知局部有色受光，不能是白灰雾或暗块；`dark-to-light` 的每个旧光影/形状都有 `keep/fade/remove-visually` 结论，干净浅底上只保留必要的极淡环境光。冗余纯装饰氛围可通过既有 Paint/色标 Alpha=0 视觉移除，但节点、几何、蒙版和稳定底色不变；若仍在卡顶形成暗了一块、灰带、厚重光斑或高频形状，直接 FAIL。同模式保持空间配方，已登记材质强度例外逐项核对。
 - `targetUiMode=light` 的无彩暗层审计已覆盖 `#000000`、近黑灰、低明度中性色、暗色 Effect、低明度渐变端点与主题装饰 IMAGE，并区分结构蒙版/Boolean 几何和真实输出。卡顶氛围不得出现大片黑灰、深纹理或只因 Alpha 低而放行；Icon/按钮的主体、中间调与大面积塑形暗部也不得形成低明度脏块。
+- 卡顶功能入口旁的既有渐变/装饰若被比整条标题带更小的祖先裁切，须把裁切线列入 `boundaryGroups` 的真实像素审核；即使单层材质和通道都正确，也不能留下突然停止的有色矩形、半截亮带或硬边。无业务职责的局部装饰优先在现有 Paint/节点 Alpha 上视觉淡出，不移动标题或按钮，也不删除结构节点。
 - 既有 SOLID 模糊光斑、GRADIENT、位图/滤镜、反射、底色羽化层都已分类；没有氛围的卡不凭想象新增氛围。ALPHA 蒙版灰色与 Boolean 操作数未误判为灰色表面，结构蒙版未改动。
 - 多层在同一区域重叠后仍保持干净光色，不能凭单层饱和度、低 Alpha 或两种相邻 Hue 直接通过；核对最终主体/受光区、向稳定底色消隐及邻近按钮关系，不能只有一个鲜亮像素或一条亮边。
 - 原稿卡顶若由两个或多个可见氛围圆/光斑/层共同形成，逐成员核对 `materialRelationPlan`：同属 `cardAtmospherePalette` 只要求同家族，不要求同 RGB；原有冷暖、色相、彩度、明度或空间受光差异不得被压成一个颜色。计划快照、代表读回和最终读回的 `scripts/material_relation_audit.py` 均通过，且 1:1 下各层仍承担可解释的不同光照职责。
+- 渐变或跨节点材质中若源颜色形成重复/交替角色组（典型为金属暗/亮色标交替），`material_relation_audit.py` 必须验证同一源角色的目标成员保持相近、不同源角色继续分离。只保留一个最大色差、但把其余暗/亮色标压成同色，仍是 `material role-group pattern changed`，直接 FAIL。
 - 普通卡片标题默认使用 `textBaseColor`，通过原字号、字重和位置建立层级；仅登记了原稿强调或明确业务/主题证据时才使用 `titleAccent`。标题是稳定纯色或窄差渐变，只在边角有小范围受光，不与氛围、Icon、按钮共享大渐变，也不机械复用 `dataAccent` 或金色按钮。
 - 标题若原有多个可见 Fill、文字区间、渐变色标、Stroke 或颜色 Effect，`textBaseColor/titleAccent` 只绑定稳定代表 Paint；其余成员按 `materialRelationPlan` 保留克制但可感知的职责差异。所有标题通道变成同一 RGB，即使 Gradient 类型、色标数和位置未变也直接 FAIL。
 - 卡片顶部包边、角饰、标题装饰线和顶部光带引用表面/`cardAtmospherePalette` 家族，未机械复用 `dataAccent`、Icon 或 `buttonPrimary`。重复卡顶出现黄色/金色边圈而无原稿业务强调与新主题证据时直接 FAIL。
@@ -314,6 +336,8 @@ Phase 1 在 `sourceAudit.contrastRelationships` 建立实际存在的对应关�
 
 ## 11. 最终闸门
 
+功能入口须先按[《功能入口保真》](interaction-entry-contract.md)核对 `sourceInteractions`。主要/次级入口均独立验主体与宿主关系，不允许只凭文字对比或主要 CTA 通过放行。`interaction-entry-coverage` 由冻结、预检和 finalize 强制执行；实际边界样本归入 `contrastAudit`，原有相对层级归入逐入口 `button-salience/hierarchy` 视觉门禁。
+
 先按《执行工具》第 5 节实际执行 finalize，并把覆盖、目标完成与 release-check 结果记入 `finalAudit`；任何脚本 FAIL、未覆盖规则/实例、旧门禁或 UNKNOWN 均阻止完成。该汇总不替代下列全部专门审计，不得删除未接入脚本的门禁。只有以下全部为 PASS（含有效场景门禁、最终配方一致性、无待恢复批次），才能令 `finalAudit=pass`：
 
 ```text
@@ -326,6 +350,7 @@ kvLockedSubtreeAudit
 heroBottomExtensionAudit
 paintPresenceMask
 visualSurfaceCarrier
+textRangeCoverageAudit
 textRampIntegrity
 contrastAudit
 tabStateAudit
@@ -336,6 +361,7 @@ schemeAnchorConformanceAudit
 iconMaterialAudit
 iconPairAudit
 interactionSalienceAudit
+interactionEntryCoverageAudit
 colorClarityAudit
 hsbGuardrailAudit
 buttonCompositeAudit
@@ -343,6 +369,8 @@ disabledButtonOpacityAudit
 labelReadabilityAudit
 cardSurfaceAudit
 cardAtmosphereAudit
+crossModeCompositeCoverageAudit
+surfaceContinuityAudit
 styleAdaptationAudit
 protectedHeroControlsAudit
 protectedMediaAudit
@@ -354,4 +382,8 @@ renderedResidualAudit
 fiveViewVisualAudit
 ```
 
-仅实际不存在的角色可带读取证据记 `not-applicable`，视为相应门禁满足；不是省略实际存在的检查。`contrastAudit` 验真实可辨性及第 5.1 节适用策略：仅 source-baseline 强制逐项不低于原稿，contextual 不以源比值回退单独判 FAIL；全部真实门禁通过且存在需披露的环境/保护约束时可记 `finalAudit=pass-with-warnings`，警告不能豁免真实可读性、视觉或严格标准失败。任一真实 FAIL：禁止报告完成，在同一副本回到指定 Phase 修正；仅按主 skill 的真实阻塞条件请求必要信息/授权。
+仅实际不存在的角色可带读取证据记 `not-applicable`，视为相应门禁满足；不是省略实际存在的检查。`contrastAudit` 验真实可辨性及第 5.1 节适用策略：仅 source-baseline 强制逐项不低于原稿，contextual 不以源比值回退单独判 FAIL；全部真实门禁通过且存在需披露的环境/保护约束时可记 `finalAudit=pass-with-warnings`。任一真实 FAIL 禁止报告完成；终审只报告精确失败，不自动修改副本。
+
+### KV 与页面背景连续性
+
+依据《KV 色彩分析》的 `heroBottomExtensionDecision`，对照源 KV 下方色区及实际页面接缝。明显纯色/稳定色系须进入背景比较，并在实际接缝直接延续或平滑渐变至选定背景；有无 Hero 留白不改变此要求。除实际边缘取样外，查看包含 KV 下缘、首卡周边与页面背景的真实尺寸截图，确认无色块硬切、接缝被卡片遮住后仍在两侧显露、过渡末端二次突变。原有底部图形/纹理边缘与新增颜色跳变分开判断；杂色下缘采用独立渐变时，检查渐变在图片内部开始、在图片结束前或结束处达到页面背景色且不透明，标题/Logo/主要主体和功能内容未被遮挡。用包含接缝上下区域的 1:1 局部图检查左、中、右，不能仍有贯穿宽度的图片硬边或另造灰脏色带；不以取色相近、与预演像素一致或缩略图顺眼代替通过。

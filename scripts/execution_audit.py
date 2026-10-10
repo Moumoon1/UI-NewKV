@@ -126,6 +126,9 @@ def coverage(snapshot, manifest):
         if not all(isinstance(entry.get(k), str) and entry[k].strip()
                    for k in ('role', 'reason', 'ruleId')):
             errors.append({'path': path, 'error': 'role/reason/ruleId required'})
+        elif entry['role'].strip().lower() in (
+                'unknown', 'unclassified', 'pending', 'todo', 'tbd'):
+            errors.append({'path': path, 'error': 'placeholder role is not semantic classification'})
         disposition = entry.get('disposition')
         if disposition not in ('change', 'preserve', 'ignore'):
             errors.append({'path': path, 'error': 'unknown disposition'})
@@ -217,11 +220,340 @@ def batch_plan(batch, max_operations=64, max_bytes=48000):
 
 
 MACHINE_RULES = {'source-unchanged', 'clone-allowed-differences', 'color-coverage', 'plan-complete',
-                 'contrast-baseline', 'color-relations', 'visual-unit-coverage',
-                 'color-bindings-clear'}
+                 'contrast-baseline', 'color-relations', 'visual-unit-coverage', 'icon-glyph-coverage',
+                 'color-bindings-clear', 'text-range-coverage',
+                 'cross-mode-composite-coverage', 'surface-system'}
 VISUAL_RULES = {'kv-fit', 'theme-consistency', 'clarity', 'hierarchy', 'button-salience',
                 'cta-salience', 'icon-clarity', 'readability', 'material-layers',
-                'surface-discernibility', 'state-discernibility', 'control-family-consistency'}
+                'surface-discernibility', 'state-discernibility', 'control-family-consistency',
+                'cross-mode-composite', 'surface-continuity'}
+
+
+def _visible_nodes(doc, root_id):
+    visible = {}
+    def visit(node_id, hidden=False):
+        row = doc['nodes'][node_id]
+        props = row['props']
+        current = hidden or props.get('visible') is False or props.get('opacity') == 0
+        visible[node_id] = not current
+        for child in row['children']:
+            visit(child, current)
+    visit(root_id)
+    return visible
+
+
+def _is_descendant(doc, node_id, ancestor_id):
+    current = node_id
+    while current in doc['nodes']:
+        if current == ancestor_id:
+            return True
+        current = doc['nodes'][current]['parentId']
+    return False
+
+
+def icon_glyph_requirements(source, manifest, rules):
+    """Require channel-level coverage of every declared functional Icon subtree.
+
+    A preserved glyph channel is only valid when it is explicitly proven to be
+    theme-neutral. This prevents changing an Icon container while leaving a warm
+    source-theme path inside the glyph.
+    """
+    doc = snapshot_document(source)
+    rule = rules.get('icon-clarity', {})
+    if rule.get('applicable') is not True:
+        return {'status': 'pass', 'applicable': False, 'rootCount': 0,
+                'channelCount': 0, 'errors': []}
+    plan = manifest.get('iconGlyphPlan')
+    if (not isinstance(plan, dict) or plan.get('schemaVersion') != 1 or
+            plan.get('sourceHash') != digest(doc) or not isinstance(plan.get('roots'), list) or
+            not plan['roots']):
+        return {'status': 'fail', 'applicable': True, 'rootCount': 0, 'channelCount': 0,
+                'errors': [{'error': 'fresh nonempty iconGlyphPlan bound to source snapshot required'}]}
+    visible = _visible_nodes(doc, source['rootId'])
+    inventory = {entry['path']: entry for entry in color_inventory(source)['entries']
+                 if not entry['inactive'] and visible.get(entry['nodeId'])}
+    manifest_index = {entry['path']: entry for entry in manifest.get('entries', [])}
+    icon_scope = set(rule.get('scopeNodeIds', []))
+    errors, seen_roots, total = [], set(), 0
+    for root in plan['roots']:
+        root_id = root.get('rootNodeId')
+        if root_id in seen_roots:
+            errors.append({'rootNodeId': root_id, 'error': 'duplicate Icon root'})
+            continue
+        seen_roots.add(root_id)
+        if root_id not in doc['nodes'] or root_id not in icon_scope:
+            errors.append({'rootNodeId': root_id, 'error': 'Icon root missing or omitted from icon-clarity scope'})
+            continue
+        expected = {path for path, item in inventory.items()
+                    if _is_descendant(doc, item['nodeId'], root_id)}
+        channels = root.get('channels')
+        if not isinstance(channels, list):
+            errors.append({'rootNodeId': root_id, 'error': 'Icon channels required'})
+            continue
+        indexed = {}
+        for channel in channels:
+            path = channel.get('path')
+            if path in indexed:
+                errors.append({'rootNodeId': root_id, 'path': path, 'error': 'duplicate Icon channel'})
+                continue
+            indexed[path] = channel
+            part = channel.get('part')
+            action = channel.get('action')
+            if part not in {'glyph', 'container', 'reflection', 'protected'}:
+                errors.append({'rootNodeId': root_id, 'path': path, 'error': 'unknown Icon channel part'})
+            if action not in {'change', 'preserve', 'protected'}:
+                errors.append({'rootNodeId': root_id, 'path': path, 'error': 'unknown Icon channel action'})
+                continue
+            expected_disposition = 'change' if action == 'change' else 'preserve'
+            if manifest_index.get(path, {}).get('disposition') != expected_disposition:
+                errors.append({'rootNodeId': root_id, 'path': path,
+                               'error': 'Icon action differs from color manifest disposition'})
+            if not isinstance(channel.get('reason'), str) or not channel['reason'].strip():
+                errors.append({'rootNodeId': root_id, 'path': path, 'error': 'Icon channel reason required'})
+            if part == 'glyph' and action == 'preserve' and not (
+                    channel.get('themeNeutral') is True and
+                    isinstance(channel.get('neutralEvidence'), str) and
+                    channel['neutralEvidence'].strip()):
+                errors.append({'rootNodeId': root_id, 'path': path,
+                               'error': 'preserved glyph channel needs explicit theme-neutral evidence'})
+        missing = sorted(expected - indexed.keys())
+        extra = sorted(indexed.keys() - expected)
+        if missing:
+            errors.append({'rootNodeId': root_id, 'error': 'visible Icon channels missing', 'paths': missing})
+        if extra:
+            errors.append({'rootNodeId': root_id, 'error': 'undeclared/nonvisible Icon channels', 'paths': extra})
+        total += len(expected)
+    return {'status': 'fail' if errors else 'pass', 'applicable': True,
+            'rootCount': len(seen_roots), 'channelCount': total, 'errors': errors}
+
+
+def text_range_requirements(source, manifest, relationships, rules):
+    """Require every visible styled text fill range to be classified and contrast-bound."""
+    doc = snapshot_document(source)
+    visible = _visible_nodes(doc, source['rootId'])
+    text_nodes = {node_id: row for node_id, row in doc['nodes'].items()
+                  if visible.get(node_id) and row['props'].get('type') == 'TEXT'
+                  and isinstance(row['props'].get('characters'), str)
+                  and row['props']['characters']}
+    if not text_nodes:
+        return {'status': 'pass', 'applicable': False, 'textNodeCount': 0,
+                'rangeCount': 0, 'errors': []}
+    plan = manifest.get('textRangePlan')
+    if (not isinstance(plan, dict) or plan.get('schemaVersion') != 1 or
+            plan.get('sourceHash') != digest(doc) or not isinstance(plan.get('entries'), list)):
+        return {'status': 'fail', 'applicable': True, 'textNodeCount': len(text_nodes),
+                'rangeCount': 0, 'errors': [{'error': 'fresh textRangePlan bound to source snapshot required'}]}
+    relation_index = {pair['id']: pair for pair in relationships}
+    manifest_index = {entry['path']: entry for entry in manifest.get('entries', [])}
+    inventory_paths = {entry['path'] for entry in color_inventory(source)['entries']}
+    entries = plan['entries']; indexed = {}; errors = []; range_count = 0
+    for entry in entries:
+        node_id = entry.get('nodeId')
+        if node_id in indexed:
+            errors.append({'nodeId': node_id, 'error': 'duplicate text range plan entry'})
+        indexed[node_id] = entry
+    for node_id in sorted(set(indexed) - set(text_nodes)):
+        errors.append({'nodeId': node_id, 'error': 'text range plan targets non-visible or empty text'})
+    for node_id in sorted(set(text_nodes) - set(indexed)):
+        errors.append({'nodeId': node_id, 'error': 'visible text node missing from text range plan'})
+    readability_scope = set(rules.get('readability', {}).get('scopeNodeIds', []))
+    for node_id, row in text_nodes.items():
+        entry = indexed.get(node_id)
+        if not entry:
+            continue
+        source_runs = row['props'].get('textRuns', {}).get('fills')
+        ranges = entry.get('ranges')
+        if not isinstance(source_runs, list) or not source_runs:
+            errors.append({'nodeId': node_id, 'error': 'styled text fill ranges missing from source snapshot'})
+            continue
+        if not isinstance(ranges, list):
+            errors.append({'nodeId': node_id, 'error': 'text ranges required'})
+            continue
+        expected_spans = [(run.get('start'), run.get('end')) for run in source_runs]
+        actual_spans = [(run.get('start'), run.get('end')) for run in ranges]
+        if actual_spans != expected_spans:
+            errors.append({'nodeId': node_id, 'error': 'plan must preserve every styled fill range boundary',
+                           'expected': expected_spans, 'actual': actual_spans})
+        for index, text_range in enumerate(ranges):
+            range_count += 1
+            prefix = '/nodes/' + escape(node_id) + '/props/textRuns/fills/' + str(index)
+            expected_channels = sorted(path for path in inventory_paths if path.startswith(prefix + '/'))
+            channels = text_range.get('channelPaths')
+            if not isinstance(channels, list) or sorted(channels) != expected_channels:
+                errors.append({'nodeId': node_id, 'rangeIndex': index,
+                               'error': 'range must name every stored text color channel',
+                               'expectedPaths': expected_channels})
+                continue
+            action = text_range.get('action')
+            if action not in {'change', 'preserve', 'protected'}:
+                errors.append({'nodeId': node_id, 'rangeIndex': index, 'error': 'unknown text range action'})
+                continue
+            if not isinstance(text_range.get('role'), str) or not text_range['role'].strip() or \
+                    not isinstance(text_range.get('reason'), str) or not text_range['reason'].strip():
+                errors.append({'nodeId': node_id, 'rangeIndex': index,
+                               'error': 'text range role and reason required'})
+            dispositions = {manifest_index.get(path, {}).get('disposition') for path in channels}
+            expected_disposition = 'change' if action == 'change' else 'preserve'
+            if dispositions != {expected_disposition}:
+                errors.append({'nodeId': node_id, 'rangeIndex': index,
+                               'error': 'text range action differs from color manifest dispositions'})
+            if action == 'protected':
+                protection = text_range.get('protectionClass')
+                if protection not in {'protected-media-overlay', 'protected-rank-top3',
+                                       'protected-marketing-banner', 'brand', 'semantic-status'}:
+                    errors.append({'nodeId': node_id, 'rangeIndex': index,
+                                   'error': 'exact supported text protection class required'})
+                if protection == 'protected-media-overlay':
+                    cover = text_range.get('coverNodeId')
+                    if (cover not in doc['nodes'] or cover == source['rootId'] or
+                            not _is_descendant(doc, node_id, cover)):
+                        errors.append({'nodeId': node_id, 'rangeIndex': index,
+                                       'error': 'media protection must name an actual containing cover subtree'})
+                continue
+            hosts = text_range.get('hostNodeIds')
+            pair_ids = text_range.get('contrastPairIds')
+            if (not isinstance(hosts, list) or not hosts or not set(hosts) <= doc['nodes'].keys() or
+                    not isinstance(pair_ids, list) or not pair_ids):
+                errors.append({'nodeId': node_id, 'rangeIndex': index,
+                               'error': 'non-protected text range needs actual hosts and contrast pairs'})
+                continue
+            for pair_id in pair_ids:
+                pair = relation_index.get(pair_id)
+                if not pair or node_id not in pair.get('nodeIds', []) or not set(hosts) <= set(pair.get('nodeIds', [])):
+                    errors.append({'nodeId': node_id, 'rangeIndex': index, 'pairId': pair_id,
+                                   'error': 'contrast pair does not cover this text range and its hosts'})
+                elif manifest.get('themeTransition') in {'light-to-dark', 'dark-to-light'}:
+                    disabled_root = text_range.get('disabledStateRootId')
+                    minimum = pair.get('minimumContrast')
+                    if disabled_root:
+                        if (disabled_root not in hosts or
+                                doc['nodes'][disabled_root]['props'].get('opacity') != .5 or
+                                pair.get('disabledStateRootId') != disabled_root or
+                                minimum is not None):
+                            errors.append({'nodeId': node_id, 'rangeIndex': index, 'pairId': pair_id,
+                                           'error': 'disabled text exception needs exact 50% ancestor and measured-only pair'})
+                    elif type(minimum) not in (int, float) or not math.isfinite(minimum) or minimum < 3:
+                        errors.append({'nodeId': node_id, 'rangeIndex': index, 'pairId': pair_id,
+                                       'error': 'cross-mode visible text needs an explicit minimumContrast >= 3'})
+            if node_id not in readability_scope:
+                errors.append({'nodeId': node_id, 'rangeIndex': index,
+                               'error': 'visible non-protected text omitted from readability visual scope'})
+    return {'status': 'fail' if errors else 'pass', 'applicable': True,
+            'textNodeCount': len(text_nodes), 'rangeCount': range_count, 'errors': errors}
+
+
+def _alpha_paths(doc, color_path):
+    result = []
+    color = at(doc, color_path)
+    if isinstance(color, dict) and color.get('a', 1) < 1:
+        result.append(color_path + '/a')
+    tokens = parts(color_path)
+    for length in range(len(tokens) - 1, 2, -1):
+        path = '/' + '/'.join(escape(v) for v in tokens[:length])
+        value = at(doc, path)
+        if isinstance(value, dict) and type(value.get('opacity')) in (int, float) and value['opacity'] < 1:
+            result.append(path + '/opacity')
+    current = tokens[1]
+    while current in doc['nodes']:
+        opacity_path = '/nodes/' + escape(current) + '/props/opacity'
+        opacity = at(doc, opacity_path)
+        if type(opacity) in (int, float) and opacity < 1:
+            result.append(opacity_path)
+        current = doc['nodes'][current]['parentId']
+    return sorted(set(result))
+
+
+def cross_mode_composite_requirements(source, actual, manifest, rules, mapping=None):
+    """Cross-mode themes must re-evaluate appearance alpha and gradient edges."""
+    source_doc, actual_doc = mapped_document(source, actual, mapping)
+    transition = manifest.get('themeTransition')
+    if transition not in {'light-to-light', 'dark-to-dark', 'light-to-dark', 'dark-to-light'}:
+        return {'status': 'fail', 'applicable': True,
+                'errors': [{'error': 'explicit themeTransition required'}]}
+    if transition in {'light-to-light', 'dark-to-dark'}:
+        return {'status': 'pass', 'applicable': False, 'candidateCount': 0,
+                'boundaryGroupCount': 0, 'errors': []}
+    inventory = {entry['path']: entry for entry in color_inventory(source)['entries']}
+    candidates = {}
+    for entry in manifest.get('entries', []):
+        path = entry.get('path'); source_entry = inventory.get(path)
+        if not source_entry or source_entry['inactive']:
+            continue
+        role = entry.get('role', '').lower()
+        alpha_paths = _alpha_paths(source_doc, path)
+        appearance_role = any(token in role for token in ('text', 'title', 'atmosphere', 'fade', 'transition'))
+        gradient = '/gradientStops/' in path
+        if alpha_paths or appearance_role or gradient:
+            candidates[path] = {'nodeId': entry.get('nodeId') or parts(path)[1],
+                                'role': entry.get('role'), 'alphaPaths': alpha_paths,
+                                'gradient': gradient}
+    plan = manifest.get('crossModeCompositePlan')
+    if (not isinstance(plan, dict) or plan.get('schemaVersion') != 1 or
+            plan.get('sourceHash') != digest(source_doc) or not isinstance(plan.get('entries'), list)):
+        return {'status': 'fail', 'applicable': True, 'candidateCount': len(candidates),
+                'boundaryGroupCount': 0,
+                'errors': [{'error': 'fresh crossModeCompositePlan required for cross-mode adaptation'}]}
+    indexed = {}; errors = []
+    for item in plan['entries']:
+        path = item.get('path')
+        if path in indexed:
+            errors.append({'path': path, 'error': 'duplicate cross-mode composite entry'})
+        indexed[path] = item
+    for path in sorted(set(candidates) - set(indexed)):
+        errors.append({'path': path, 'error': 'cross-mode appearance/alpha channel omitted'})
+    for path in sorted(set(indexed) - set(candidates)):
+        errors.append({'path': path, 'error': 'cross-mode entry is not an active candidate'})
+    composite_scope = set(rules.get('cross-mode-composite', {}).get('scopeNodeIds', []))
+    for path, candidate in candidates.items():
+        item = indexed.get(path)
+        if not item:
+            continue
+        if sorted(item.get('sourceAlphaPaths', [])) != candidate['alphaPaths']:
+            errors.append({'path': path, 'error': 'source alpha contributors must be enumerated exactly'})
+        decision = item.get('decision')
+        if decision not in {'recompute-appearance', 'remove-visually',
+                            'preserve-state', 'preserve-structural'}:
+            errors.append({'path': path, 'error': 'unknown cross-mode alpha/composite decision'})
+            continue
+        role = (candidate['role'] or '').lower()
+        if decision == 'preserve-structural' and not any(v in role for v in ('mask', 'structure')):
+            errors.append({'path': path, 'error': 'appearance color cannot reuse alpha as structural'})
+        if decision == 'preserve-state' and not any(v in role for v in ('state', 'disabled', 'locked')):
+            errors.append({'path': path, 'error': 'non-state appearance cannot reuse state alpha'})
+        if decision in {'recompute-appearance', 'remove-visually'} and not item.get('targetCompositeEvidenceId'):
+            errors.append({'path': path, 'error': 'appearance decision needs target composite evidence'})
+        if (not isinstance(item.get('hostNodeIds'), list) or not item['hostNodeIds'] or
+                not set(item['hostNodeIds']) <= source_doc['nodes'].keys() or
+                not isinstance(item.get('reviewSceneId'), str) or not item['reviewSceneId'].strip()):
+            errors.append({'path': path, 'error': 'actual hosts and 1:1 review scene required'})
+        if candidate['nodeId'] not in composite_scope:
+            errors.append({'path': path, 'error': 'candidate omitted from cross-mode composite visual scope'})
+    groups = plan.get('boundaryGroups')
+    if not isinstance(groups, list) or not groups:
+        errors.append({'error': 'cross-mode adaptation requires surface/gradient boundary groups'})
+        groups = []
+    boundary_nodes = set()
+    for group in groups:
+        nodes = group.get('nodeIds')
+        if (group.get('kind') not in {'surface-edge', 'gradient-terminal', 'card-atmosphere'} or
+                not isinstance(nodes, list) or not nodes or not set(nodes) <= source_doc['nodes'].keys() or
+                not group.get('reviewSceneId') or not group.get('evidenceId')):
+            errors.append({'groupId': group.get('id'), 'error': 'invalid cross-mode boundary group'})
+            continue
+        boundary_nodes.update(nodes)
+    required_boundary_nodes = {c['nodeId'] for c in candidates.values()
+                               if c['gradient'] or 'atmosphere' in (c['role'] or '').lower()}
+    if not required_boundary_nodes <= boundary_nodes:
+        errors.append({'error': 'gradient/atmosphere candidates missing boundary review',
+                       'nodeIds': sorted(required_boundary_nodes - boundary_nodes)})
+    continuity_scope = set(rules.get('surface-continuity', {}).get('scopeNodeIds', []))
+    if not boundary_nodes <= continuity_scope:
+        errors.append({'error': 'boundary nodes omitted from surface-continuity visual scope',
+                       'nodeIds': sorted(boundary_nodes - continuity_scope)})
+    return {'status': 'fail' if errors else 'pass', 'applicable': True,
+            'transition': transition, 'candidateCount': len(candidates),
+            'boundaryGroupCount': len(groups), 'errors': errors,
+            'actualHash': digest(actual_doc)}
 
 
 def visual_units(source, manifest, registry, rules=None):
@@ -362,6 +694,19 @@ def appearance_spread(colors):
             'lightness': [v[0] for v in labs], 'luminance': [luminance(c) for c in colors]}
 
 
+def _anchor_matches(target, anchor):
+    """Figma SOLID RGB and opaque gradient RGBA represent the same anchor.
+
+    Missing alpha means 1; nonopaque stops cannot establish a stable anchor.
+    """
+    if not isinstance(target, dict) or not isinstance(anchor, dict):
+        return False
+    return (all(k in target and k in anchor for k in 'rgb') and
+            target_equal({k: target[k] for k in 'rgb'}, {k: anchor[k] for k in 'rgb'}) and
+            target_equal(target.get('a', 1), anchor.get('a', 1)) and
+            target_equal(target.get('a', 1), 1))
+
+
 def interaction_requirements(source, manifest, rules):
     """Derive mandatory button comparison coverage from the full source inventory."""
     doc = snapshot_document(source)
@@ -387,7 +732,7 @@ def interaction_requirements(source, manifest, rules):
         errors.append({'error': 'each main small-button and CTA family needs button anchor channels'})
     elif isinstance(button_anchor, dict):
         for entry in anchor_entries:
-            if entry.get('disposition') != 'change' or not target_equal(entry.get('target'), button_anchor):
+            if entry.get('disposition') != 'change' or not _anchor_matches(entry.get('target'), button_anchor):
                 errors.append({'path': entry['path'],
                                'error': 'button anchor target differs from schemeAnchorContract.button'})
     family_rule = rules.get('control-family-consistency', {})
@@ -460,7 +805,7 @@ def scheme_anchor_requirements(manifest):
             if entry.get('inactive') is True:
                 errors.append({'anchorId': name, 'path': entry.get('path'),
                                'error': 'anchor channel cannot be inactive'})
-            if entry.get('disposition') != 'change' or not target_equal(entry.get('target'), anchor):
+            if entry.get('disposition') != 'change' or not _anchor_matches(entry.get('target'), anchor):
                 errors.append({'anchorId': name, 'path': entry.get('path'),
                                'error': 'anchor target differs from selected schemeAnchorContract'})
     unknown = sorted({e.get('anchorId') for e in entries if e.get('anchorId') is not None} - set(names))
@@ -484,13 +829,21 @@ def verify_displayed_relations(source, actual, rule, evidence):
     for group in groups:
         points, limit = group.get('xy'), group.get('maximumChannelDelta')
         kind = group.get('relationType', 'continuity')
-        if kind not in {'continuity', 'appearance-family'} or not isinstance(points, list) or len(points) < 2:
+        if kind not in {'continuity', 'appearance-family', 'source-appearance-equivalence',
+                        'surface-linked-appearance'} or not isinstance(points, list) or len(points) < 2:
             raise ValueError('known displayed relation and frozen comparison points required')
         if kind == 'continuity' and (type(limit) not in (int, float) or not 0 <= limit <= 255):
             raise ValueError('continuity needs an explicit scene tolerance')
-        if kind == 'appearance-family':
+        if kind in {'appearance-family', 'source-appearance-equivalence', 'surface-linked-appearance'}:
             if not isinstance(group.get('basis'), str) or not group['basis'].strip():
-                raise ValueError('appearance family needs predeclared source/target reasoning')
+                raise ValueError('appearance relation needs predeclared source evidence')
+        if kind == 'surface-linked-appearance':
+            if group.get('targetBasis') != 'surface-recipe':
+                raise ValueError('surface-linked appearance must use the surface recipe')
+            anchor = group.get('anchorPointIndex')
+            if not isinstance(anchor, int) or isinstance(anchor, bool) or not 0 <= anchor < len(points):
+                raise ValueError('surface-linked appearance needs a valid surface anchor point')
+        if kind == 'appearance-family':
             for key in ('additionalLightnessSpread', 'additionalColorSpreadDeltaE76'):
                 value = group.get(key)
                 if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
@@ -514,13 +867,25 @@ def verify_displayed_relations(source, actual, rule, evidence):
                     native_evidence.append(value['image'])
             measured[side] = {'rgb8': [[round(c * 255) for c in rgb] for rgb in colors],
                               'maximumChannelDelta': max(abs(a[c] - b[c]) * 255 for a in colors for b in colors for c in range(3))}
-            if kind == 'appearance-family':
+            if kind in {'appearance-family', 'source-appearance-equivalence', 'surface-linked-appearance'}:
                 measured[side].update(appearance_spread(colors))
         if kind == 'appearance-family':
             limits = {'lightnessSpread': measured['source']['lightnessSpread'] + group['additionalLightnessSpread'],
                       'colorSpreadDeltaE76': measured['source']['colorSpreadDeltaE76'] + group['additionalColorSpreadDeltaE76']}
             passed = all(measured['actual'][key] <= value + 1e-9 for key, value in limits.items())
             measured['limits'] = limits
+        elif kind in {'source-appearance-equivalence', 'surface-linked-appearance'}:
+            source_equivalent = (measured['source']['lightnessSpread'] <= 2 and
+                                 measured['source']['colorSpreadDeltaE76'] <= 2)
+            limits = {'lightnessSpread': measured['source']['lightnessSpread'],
+                      'colorSpreadDeltaE76': measured['source']['colorSpreadDeltaE76']}
+            passed = source_equivalent and all(
+                measured['actual'][key] <= value + 1e-9 for key, value in limits.items())
+            measured['sourceAppearanceEquivalent'] = source_equivalent
+            measured['limits'] = limits
+            if kind == 'surface-linked-appearance':
+                measured['anchorPointIndex'] = group['anchorPointIndex']
+                measured['targetBasis'] = group['targetBasis']
         else:
             passed = all(v['maximumChannelDelta'] <= limit + 1e-9 for v in measured.values())
         results.append({'id': group['id'], 'status': 'pass' if passed else 'fail', **measured})
@@ -644,13 +1009,20 @@ def finalize(spec):
         raise ValueError('color relations differ from frozen groups')
     if not relations.get('groups') and not relation_rule.get('emptyEvidence'):
         raise ValueError('empty color relations require predeclared source evidence')
-    machine['color-relations'] = (color_relations(source, actual, relations, mapping)
-                                  if relations.get('groups') else
-                                  {'status': 'pass', 'groupCount': 0,
-                                   'notApplicableEvidence': relation_rule['emptyEvidence']})
+    machine['color-relations'] = color_relations(source, actual, relations, mapping, plan)
+    if not relations.get('groups'):
+        machine['color-relations']['notApplicableEvidence'] = relation_rule['emptyEvidence']
     source_doc, actual_doc = mapped_document(source, actual, mapping)
+    surface_rule = rules['surface-system'].get('verifier', {})
+    if (surface_rule.get('type') != 'surface-system' or
+            surface_rule.get('planHash') != digest(plan.get('surfaceSystemPlan'))):
+        raise ValueError('surface-system rule must bind the frozen surfaceSystemPlan')
+    from surface_system_audit import inspect as inspect_surface_system
+    machine['surface-system'] = inspect_surface_system(source, actual, plan, rules, mapping)
     machine['scheme-anchor-conformance'] = scheme_anchor_requirements(plan)
     machine['interaction-requirements'] = interaction_requirements(source, plan, rules)
+    from interaction_entry_audit import inspect as inspect_entries
+    machine['interaction-entry-coverage'] = inspect_entries(source, plan, ledger)
     unit_rule = rules['visual-unit-coverage'].get('verifier', {})
     if not spec.get('visualUnits') or unit_rule.get('type') != 'visual-unit-coverage':
         raise ValueError('frozen visualUnits are required for full and local runs')
@@ -659,6 +1031,7 @@ def finalize(spec):
         raise ValueError('visual units differ from the frozen registry')
     unit_result = visual_units(source, plan, registry, rules)
     machine['visual-unit-coverage'] = unit_result
+    machine['icon-glyph-coverage'] = icon_glyph_requirements(source, plan, rules)
     contrast_rule = rules['contrast-baseline'].get('verifier', {})
     if contrast_rule.get('type') != 'contrast-baseline' or not spec.get('contrastSamples'):
         raise ValueError('frozen contrast relationships and fresh contrastSamples required')
@@ -666,6 +1039,10 @@ def finalize(spec):
         source_doc, actual_doc, read_json(spec['contrastSamples']), contrast_rule.get('relationships'),
         contrast_rule.get('emphasisOrders', []), contrast_rule.get('policy', 'source-baseline'),
         contrast_rule.get('decisionContext'))
+    machine['text-range-coverage'] = text_range_requirements(
+        source, plan, contrast_rule.get('relationships', []), rules)
+    machine['cross-mode-composite-coverage'] = cross_mode_composite_requirements(
+        source, actual, plan, rules, mapping)
     if any(r.get('kind') == 'machine' and r.get('applicable') and
            r.get('verifier', {}).get('type') == 'displayed-relations' for r in rules.values()):
         if not spec.get('displayedSamples'):

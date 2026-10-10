@@ -4,6 +4,9 @@ import argparse
 import base64
 import json
 from pathlib import Path
+import sys
+import termios
+import tty
 
 
 PNG_PREFIX = base64.b64decode(
@@ -20,20 +23,9 @@ def _hash(data):
     return a, b
 
 
-def decode_transport(data):
-    if not data.startswith(PNG_PREFIX):
-        raise ValueError('image bytes changed or transport prefix missing')
-    header = data[len(PNG_PREFIX):len(PNG_PREFIX) + 21]
-    if len(header) != 21 or header[:5] != MAGIC:
-        raise ValueError('KVSS1 payload missing; image channel may have stripped it')
-    raw_size = int.from_bytes(header[5:9], 'big')
-    packed_size = int.from_bytes(header[9:13], 'big')
-    expected = (int.from_bytes(header[13:17], 'big'), int.from_bytes(header[17:21], 'big'))
-    if raw_size > 100_000_000 or packed_size > 100_000_000:
+def unpack_theme_bytes(raw_size, packed, expected):
+    if raw_size > 100_000_000 or len(packed) > 100_000_000:
         raise ValueError('transport exceeds size limit')
-    packed = data[len(PNG_PREFIX) + 21:]
-    if len(packed) != packed_size:
-        raise ValueError('missing or extra packed bytes')
     out = bytearray()
     i = 0
     while i < len(packed):
@@ -58,7 +50,11 @@ def decode_transport(data):
             raise ValueError('decompressed payload exceeds declared size')
     if len(out) != raw_size or _hash(out) != expected:
         raise ValueError('snapshot length or checksum mismatch')
-    snapshot = json.loads(out.decode('utf-8'))
+    return bytes(out)
+
+
+def validate_snapshot(raw):
+    snapshot = json.loads(raw.decode('utf-8'))
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get('nodes'), list):
         raise ValueError('not a complete snapshot')
     if snapshot.get('errors'):
@@ -70,14 +66,54 @@ def decode_transport(data):
     return snapshot
 
 
+def decode_transport(data):
+    if not data.startswith(PNG_PREFIX):
+        raise ValueError('image bytes changed or transport prefix missing')
+    header = data[len(PNG_PREFIX):len(PNG_PREFIX) + 21]
+    if len(header) != 21 or header[:5] != MAGIC:
+        raise ValueError('KVSS1 payload missing; image channel may have stripped it')
+    raw_size = int.from_bytes(header[5:9], 'big')
+    packed_size = int.from_bytes(header[9:13], 'big')
+    expected = (int.from_bytes(header[13:17], 'big'), int.from_bytes(header[17:21], 'big'))
+    packed = data[len(PNG_PREFIX) + 21:]
+    if len(packed) != packed_size:
+        raise ValueError('missing or extra packed bytes')
+    return validate_snapshot(unpack_theme_bytes(raw_size, packed, expected))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('input', type=Path, help='raw image bytes or a base64 text file')
     parser.add_argument('output', type=Path)
     parser.add_argument('--base64', action='store_true')
+    parser.add_argument('--stdin-base64', action='store_true',
+                        help='read one base64 image line from stdin')
+    parser.add_argument('--stdin-base64-length', type=int,
+                        help='read exactly this many base64 bytes from a raw TTY')
     args = parser.parse_args()
-    data = args.input.read_bytes()
-    if args.base64:
+    if args.stdin_base64_length is not None:
+        if not sys.stdin.isatty() or args.stdin_base64_length <= 0:
+            raise ValueError('positive length and a TTY are required')
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            chunks = []
+            remaining = args.stdin_base64_length
+            while remaining:
+                chunk = sys.stdin.buffer.read(min(65536, remaining))
+                if not chunk:
+                    raise ValueError('truncated base64 snapshot input')
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        data = base64.b64decode(b''.join(chunks), validate=True)
+    elif args.stdin_base64:
+        data = base64.b64decode(sys.stdin.buffer.readline().strip(), validate=True)
+    else:
+        data = args.input.read_bytes()
+    if args.base64 and not args.stdin_base64:
         data = base64.b64decode(b''.join(data.split()), validate=True)
     snapshot = decode_transport(data)
     args.output.write_text(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')))

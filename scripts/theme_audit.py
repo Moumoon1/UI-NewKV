@@ -154,15 +154,16 @@ def snapshot_document(snapshot):
     if root not in nodes:
         raise ValueError("snapshot root missing")
     seen = set()
-    def visit(node_id):
+    pending = [root]
+    while pending:
+        node_id = pending.pop()
         if node_id in seen:
             raise ValueError("cycle or duplicate child")
         seen.add(node_id)
         for child in nodes[node_id]["children"]:
             if child not in nodes or nodes[child]["parentId"] != node_id:
                 raise ValueError("incomplete or inconsistent subtree")
-            visit(child)
-    visit(root)
+            pending.append(child)
     if seen != set(nodes):
         raise ValueError("snapshot has disconnected nodes")
     return {"nodes": nodes}
@@ -192,16 +193,21 @@ def mapped_document(before, after, mapping):
     return source, {"nodes": normalized}
 
 
-def color_relations(before, after, spec, mapping=None):
-    """Check declared RGB equivalence classes, not visual quality or coverage.
+def color_relations(before, after, spec, mapping=None, manifest=None):
+    """Check declared relations and complete source sRGB8 candidate groups.
 
     Paths use source IDs and point to RGB(A) objects. Alpha and gradient
     geometry are deliberately separate: equal base colors can have different
-    state opacity. Existing structural/visual checks still apply.
+    state opacity. Passing a complete manifest makes exact source-color
+    coverage automatic. Predeclared source-semantic partitions preserve role
+    equality without confusing coincident RGB with semantic equivalence;
+    rendered appearance equivalence remains a native-pixel
+    displayed-relations responsibility.
     """
     source, target = mapped_document(before, after, mapping)
     groups = spec.get("groups")
-    if spec.get("schemaVersion") != 1 or not isinstance(groups, list) or not groups:
+    if (spec.get("schemaVersion") != 1 or not isinstance(groups, list) or
+            (not groups and manifest is None)):
         raise ValueError("color relations require nonempty groups")
     seen, results = set(), []
 
@@ -263,8 +269,138 @@ def color_relations(before, after, spec, mapping=None):
                         "comparison": comparison,
                         "maxTargetChannelDelta": max(abs(v[k] - actual[0][k]) for v in actual for k in "rgb"),
                         "paths": paths, "sourceRGB": original, "targetRGB": actual})
-    return {"status": "pass" if all(g["status"] == "pass" for g in results) else "fail",
-            "relationsHash": digest(spec), "groups": results}
+    automatic = []
+    if manifest is not None:
+        entries_by_path = {
+            entry.get('path'): entry for entry in manifest.get('entries', [])
+            if isinstance(entry, dict) and isinstance(entry.get('path'), str)
+        }
+        raw_plans = spec.get('automaticGroupPlans', [])
+        if not isinstance(raw_plans, list):
+            raise ValueError('automaticGroupPlans must be a list')
+        plan_index = {}
+        for plan in raw_plans:
+            if not isinstance(plan, dict) or not isinstance(plan.get('id'), str) or not plan['id']:
+                raise ValueError('automatic group plan needs a nonempty ID')
+            if plan['id'] in plan_index:
+                raise ValueError('automatic group plan IDs must be unique')
+            plan_index[plan['id']] = plan
+        # Reuse this call's validated source only; mutable snapshots are never
+        # cached between audits. Large numbers of groups need just one hash.
+        source_hash = digest(source) if any(
+            p.get('relationType') == 'semantic-partition' for p in raw_plans) else None
+
+        def surface_role(entry):
+            role = str((entry or {}).get('role', '')).strip().lower()
+            return role == 'surface' or role.startswith('surface.') or role.endswith('.surface')
+
+        buckets = {}
+        for entry in manifest.get('entries', []):
+            if entry.get('disposition') != 'change':
+                continue
+            path = entry.get('path')
+            if not isinstance(path, str):
+                continue
+            value = at(source, path)
+            if (not isinstance(value, dict) or
+                    not {'r', 'g', 'b'} <= set(value) or
+                    any(type(value[k]) not in (int, float) or
+                        not math.isfinite(value[k]) or not 0 <= value[k] <= 1
+                        for k in 'rgb')):
+                continue
+            key = tuple(math.floor(value[k] * 255 + .5) for k in 'rgb')
+            buckets.setdefault(key, []).append(path)
+        for source_rgb8, paths in sorted(buckets.items()):
+            paths = sorted(set(paths))
+            if len(paths) < 2:
+                continue
+            colors = [rgb_at(target, path) for path in paths]
+            target_same = all(
+                all(math.floor(color[k] * 255 + .5) ==
+                    math.floor(colors[0][k] * 255 + .5) for k in 'rgb')
+                for color in colors[1:])
+            group_id = 'automatic-source-rgb8-' + '-'.join(map(str, source_rgb8))
+            surface_paths = [path for path in paths if surface_role(entries_by_path.get(path))]
+            non_surface_paths = [path for path in paths if path not in surface_paths]
+            surface_linked = bool(surface_paths and non_surface_paths)
+            plan = plan_index.get(group_id)
+            plan_status = 'not-required'
+            partition_results = []
+            if plan and plan.get('relationType') == 'semantic-partition':
+                if plan.get('sourceHash') != source_hash:
+                    raise ValueError('semantic partition requires current sourceHash')
+                if (sorted(plan.get('paths', [])) != paths or
+                        not isinstance(plan.get('reason'), str) or not plan['reason'].strip()):
+                    raise ValueError('semantic partition must bind exact group paths and source evidence')
+                partitions = plan.get('partitions')
+                if not isinstance(partitions, list) or len(partitions) < 2:
+                    raise ValueError('semantic partition needs at least two source semantic groups')
+                covered, roles = [], set()
+                for partition in partitions:
+                    if not isinstance(partition, dict):
+                        raise ValueError('semantic partition member must be an object')
+                    members, role = partition.get('paths'), partition.get('role')
+                    if (not isinstance(members, list) or not members or
+                            any(not isinstance(p, str) or p not in paths for p in members) or
+                            not isinstance(role, str) or not role.strip() or role in roles or
+                            not isinstance(partition.get('sourceEvidence'), str) or
+                            not partition['sourceEvidence'].strip() or
+                            any(entries_by_path[p].get('role') != role for p in members)):
+                        raise ValueError('semantic partition needs distinct frozen roles, paths and source evidence')
+                    roles.add(role)
+                    covered.extend(members)
+                    values = [rgb_at(target, p) for p in members]
+                    equivalent = all(all(math.floor(v[k] * 255 + .5) ==
+                                        math.floor(values[0][k] * 255 + .5) for k in 'rgb')
+                                     for v in values)
+                    partition_results.append({'role': role, 'paths': members,
+                                              'status': 'pass' if equivalent else 'fail'})
+                if sorted(covered) != paths:
+                    raise ValueError('semantic partition must cover every path exactly once')
+                if surface_paths and not any(set(surface_paths) <= set(p['paths']) for p in partitions):
+                    raise ValueError('semantic partition cannot split source surface members')
+                plan_status = 'pass' if all(p['status'] == 'pass' for p in partition_results) else 'fail'
+            elif surface_linked:
+                if plan is None:
+                    plan_status = 'missing'
+                else:
+                    if plan.get('relationType') != 'surface-linked-equivalence':
+                        raise ValueError('surface-linked automatic group needs relationType surface-linked-equivalence')
+                    if plan.get('targetBasis') != 'surface-recipe':
+                        raise ValueError('surface-linked automatic group must use the surface recipe')
+                    if plan.get('anchorPath') not in surface_paths:
+                        raise ValueError('surface-linked automatic group anchorPath must be a surface member')
+                    if sorted(plan.get('paths', [])) != paths:
+                        raise ValueError('surface-linked automatic group plan must bind the exact group paths')
+                    if not isinstance(plan.get('reason'), str) or not plan['reason'].strip():
+                        raise ValueError('surface-linked automatic group plan needs source relationship evidence')
+                    plan_status = 'pass'
+            elif plan is not None:
+                raise ValueError('automatic group plan must declare an applicable relationType')
+            passed_group = (plan_status == 'pass' if partition_results else
+                            target_same and plan_status not in {'missing'})
+            automatic.append({
+                'id': group_id,
+                'status': 'pass' if passed_group else 'fail',
+                'sourceRGB8': list(source_rgb8),
+                'targetEquivalent': target_same,
+                'surfaceLinked': surface_linked,
+                'surfacePaths': surface_paths,
+                'nonSurfacePaths': non_surface_paths,
+                'groupPlanStatus': plan_status,
+                'semanticPartitions': partition_results,
+                'anchorPath': plan.get('anchorPath') if plan else None,
+                'paths': paths,
+                'targetRGB': colors,
+            })
+        unknown_plans = sorted(set(plan_index) - {group['id'] for group in automatic})
+        if unknown_plans:
+            raise ValueError('automatic group plans reference unknown or singleton groups: ' + ', '.join(unknown_plans))
+    passed = (all(g['status'] == 'pass' for g in results) and
+              all(g['status'] == 'pass' for g in automatic))
+    return {"status": "pass" if passed else "fail",
+            "relationsHash": digest(spec), "groups": results,
+            'automaticSourceEquivalenceGroups': automatic}
 
 
 def policy_check(policy):
@@ -527,6 +663,7 @@ def main():
     relations = sub.add_parser("color-relations", help="check declared source RGB equivalence classes")
     relations.add_argument("before"); relations.add_argument("after"); relations.add_argument("spec")
     relations.add_argument("--map", dest="mapping")
+    relations.add_argument("--manifest")
     batch = sub.add_parser("recover", help="classify partial writes from a fresh snapshot")
     batch.add_argument("snapshot"); batch.add_argument("batch"); batch.add_argument("policy")
     state = sub.add_parser("scene-state", help="collect scene dependencies and all ancestors")
@@ -543,7 +680,8 @@ def main():
                              read_json(args.mapping) if args.mapping else None)
         elif args.command == "color-relations":
             result = color_relations(read_json(args.before), read_json(args.after), read_json(args.spec),
-                                     read_json(args.mapping) if args.mapping else None)
+                                     read_json(args.mapping) if args.mapping else None,
+                                     read_json(args.manifest) if args.manifest else None)
         elif args.command == "recover":
             result = recover_batch(read_json(args.snapshot), read_json(args.batch), read_json(args.policy))
         elif args.command == "scene-state":

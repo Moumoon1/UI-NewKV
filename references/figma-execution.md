@@ -3,7 +3,7 @@
 画风迁移模式的条件和最小差异白名单见[《画风迁移规则》](style-adaptation.md)。启用时，仅其登记的风格外观允许覆盖本文件的原材质/图片/Paint 结构保持限制；业务结构与精确保护不变。
 
 
-Phase 1 前完整读取。本文只规定 Figma 节点识别、快照、复制、解绑和分阶段写入；颜色选择以《颜色决策规则》为唯一来源。
+第 1 节用于 Phase 1P 的目标识别；其余适用写入章节在用户选色后 Phase 1W 前读取。本文只规定 Figma 节点识别、快照、复制、解绑和单次批量写入；颜色选择以《颜色决策规则》为唯一来源。普通换肤复用一次完整原稿基线，每个冻结事务一次批量写入与一次集中终审；同方案修复按《执行契约》的有界修复，不得把 clone、解绑、代表试色和扩展拆成多次 Figma 写入。
 
 每次调用 `use_figma` 前必须加载并遵守 `figma:figma-use`。默认自主执行，只有真实权限、目标、素材或结构阻塞才向用户提问。
 
@@ -128,7 +128,7 @@ itemReverseZIndex、实际绘制顺序、蒙版类型及同组作用范围
 
 完整快照一次保存并复用；工具输出可返回分组统计、稳定指纹与差异，原始数据须完整保留可追溯，不反复传输整树制造重复读取。几何指纹和颜色指纹分开：例如 `vectorNetwork.regions[].fills` 是 Paint，不混入几何哈希；顶点、线段、区域拓扑/绕向仍逐项保护。原稿审计仍比较全部字段，不能因副本允许改 Paint 而放松原稿检查。
 
-优先复用[《局部试色与执行工具》](execution-workflow.md)第 4 节的采集与差异脚本，不复制历史任务中的固定 ID 或旧规则。副本颜色解绑的 `fillStyleId/strokeStyleId/effectStyleId`、文字局部颜色样式及颜色 `boundVariables` 路径须逐项列入差异许可；保护项只豁免引用元数据，不豁免显示色、Paint/Effect 结构或材质。采集错误、缺失字段和不可比映射必须显式处理，不能忽略后记 PASS；中间阶段只读回受影响属性/依赖，原稿及副本最终仍做完整结构核对。若 Figma 上游组件集损坏，使某个实例的 `componentProperties` getter 单独报 `Component set for node has existing errors`，采集器可以在该字段留下 `$unavailable`，并在 `unavailableFields` 逐实例披露；其余字段、子树、Paint 和文字必须继续完整采集。此例外只适用于这一条精确错误，不把字段缺失当成成功读取，也不豁免原稿与副本在可读属性上的比较；最终报告受限字段。
+优先复用[《局部试色与执行工具》](execution-workflow.md)第 4 节的采集与差异脚本，不复制历史任务中的固定 ID 或旧规则。副本颜色解绑的样式和变量路径须逐项列入差异许可；保护项只豁免引用元数据，不豁免显示色、Paint/Effect 结构或材质。采集错误、缺失字段和不可比映射必须显式处理；中间阶段不重新读取整树，唯一写入只做同次原子属性核对，完整副本结构在 Phase 7 一次终审。上游组件字段不可用时逐实例披露，其余字段仍须完整采集。
 
 ## 5. 任意比例 KV 自动适配与旧资产叠层
 
@@ -139,6 +139,16 @@ itemReverseZIndex、实际绘制顺序、蒙版类型及同组作用范围
 `composite-kv` 在页面同宽且原设计宽度已匹配时默认 `scale=1`、顶部对齐；Hero 较矮时由 Hero 可见窗口裁去整组下方超出部分，不能把整组 resize 到 Hero 高度。需要同宽时只做一次统一等比缩放，内部各层共享同一变换；不得单独缩放某个子层、重算内部渐变或改变文字/主体相对位置。若 Figma 结构限制导致整组无法可靠克隆/重挂，可把完整复合节点按原设计尺度导出为单张图并作为 `kv-main-image` 放入；这是保真兜底，不能退化为导出或复用某个内层 IMAGE，源 KV 节点本身不修改。
 
 新 KV 已含底部纯色或渐变衔接时，它属于复合主视觉的一部分，必须精确保留渐变类型、`gradientTransform`、色标数量/位置/Alpha、方向与最终下缘颜色。若其终点被选作页面延伸色，页面从该实际终点继续；不得翻转、重建或叠加旧接缝渐变。旧 KV 的衔接层已被新 KV 覆盖时按 `kv-asset-subtree` 抑制；确需复用并重着色时只改已登记的色标颜色/Alpha，保持原 `gradientTransform` 和位置，禁止写入默认恒等 transform。任何渐变方向或色标位置变化都必须来自用户明确要求或独立的结构修复计划，普通换肤/KV 适配不授权。
+
+**尺寸不一致时的接色规则：** 原尺寸/同宽等比放置后默认顶部对齐。新 KV 比 Hero 可见窗口高时，保留完整载体尺寸，由 Hero 裁去下方超出部分；比窗口矮时，保留完整 KV，下面剩余高度根据新 KV 最下方区域的实际主导颜色或渐变趋势补纯色/渐变。不为对齐原标题、Logo、倒计时而沿用旧图偏移、下移新 KV 或缩短其根裁切框。确有关键内容遮挡时才记录最小定位修正及原位对比证据。
+
+底部补色只延续颜色，不重画或拉伸人物、文字、地面和其他图形；底部区域不一定是整图背景色。取足够宽的底部区域判断主导色和纵向变化，排除孤立物体像素，不用整图平均色或顶部背景色代替。留白补底在 KV 后方延续至原 Hero/UI 边界；它只填补空间，不负责柔化不透明图片的硬边。新 KV 素材及内部节点保持只读；副本的独立接缝融合层不属于锁定 KV 子树。KV 下缘有明显纯色或稳定色系区域时，该色进入背景候选，最终背景按提案比较选定；页面使用其他色系时，从该下缘色平滑渐变至目标背景，不得直接截断。此规则不依赖是否存在 Hero 留白，也不要求卡片跟随底部色。保留已选方案的稳定页面代表色时，可通过接缝处渐变衔接，不静默替换整页方案锚点。
+
+页面接缝过渡可使用副本现有页面背景载体的 Fill，必要时允许将该背景 SOLID 改为 GRADIENT_LINEAR；精确色标、渐变变换、空间范围和载体路径写入 `kvFitPlan.allowedMutations`，作为 KV 衔接例外，不改变布局，不覆盖卡片或业务内容，不进入新 KV 锁定子树。仅隐藏接缝、缩窄为不可辨亮边或把突变推到下方不构成连续通过。
+
+**杂色下缘的默认融合：** 新 KV 实际下缘仍是杂色、纹理或具体图像，且没有可直接延续的现成过渡时，默认在副本上叠加一层选定页面背景色的竖向渐变：上方 Alpha=0，下方 Alpha=1。渐变从图片底部内部开始，在图片结束前或结束处达到不透明，随后与页面背景同色；仅在图片结束后加渐变不能消除硬边。按构图选择最小有效高度，避开标题、Logo、主要主体及功能内容，不固定像素高度，不从杂色平均值拼出新的灰黄/灰绿色带。已有过渡自然连续时不重复加层；稳定纯色下缘仍按直接延续或接色处理。
+
+这是普通 KV 衔接的明确例外，无需另问用户或启动画风迁移：最多一个 `kv-seam-transition` Rectangle，置于锁定 KV 子树之外、主图前方、功能 UI 后方，不参与 Auto Layout；优先复用可独立承担该职责的既有接缝载体。范围、层级、颜色、Alpha 色标及 transform 写入 `kvFitPlan.allowedMutations`。不改原 KV 图片/内部渐变、尺度或顶部位置，不延展或重画图像。
 
 ### 5.1 先确认实际可见安全窗口
 
@@ -176,7 +186,7 @@ contain 分支默认居中；为固定功能控件或接缝做顶部/底部对�
 1. 若现有载体及其祖先已覆盖安全窗口，优先在指定 IMAGE Paint 上重设适配模式/变换，让主图按当前 fitMode 落入计算边界；保留无关 Paint、混合模式和效果。
 2. 若现有载体仅属于 KV，可调整其 `x/y/width/height` 以匹配计算边界。不得更改作为 Hero 外框或参与页面布局的载体尺寸，不得移动同节点承载的功能 UI。
 3. 若旧载体负偏移、含混合内容或内层蒙版使以上操作不可靠，允许在 Hero 内合适的既有祖先下新增**最多一个**独立 `kv-main-image` Rectangle。它使用原始新图 IMAGE Paint、正常不透明显示和等比计算尺寸；在 Auto Layout 下设绝对定位，不参与尺寸计算。放在功能 UI 后方，并避免继承旧 KV 专属裁切。原 KV 的指定 Paint 可将 Alpha 设为 0；不删除旧节点，不关闭含功能内容的祖先。新增载体不是新增页面模块。
-4. contain 留出的空间或图片透明区域，可复用 Hero 的 KV 专属环境底层；没有合适层时允许新增**最多一个** `kv-environment-backdrop` Rectangle，或在 KV 专属载体中增加一个底层 Fill。使用新 KV 稳定环境/边缘色的 SOLID 或克制渐变，覆盖 Hero 内留白，位于主图之后、功能 UI 之后。不得从标题/Logo/主体高光取补底色，不复制放大整张图充当背景以免出现重复主体，不添加新插画，也不描画地面曲线、建筑轮廓或其他原图元素来延展构图。禁止先人为缩图制造留白再补底。补底不能越出 Hero，也不能改 UI 卡片的 Paint。
+4. contain 留出的空间或图片透明区域，可复用 Hero 的 KV 专属环境底层；没有合适层时允许新增**最多一个** `kv-environment-backdrop` Rectangle，或在 KV 专属载体中增加一个底层 Fill。使用新 KV 实际留白相邻区域的 SOLID 或克制渐变；底部剩余高度按本节的底部接色规则取色，覆盖 Hero 内留白，位于主图之后、功能 UI 之后。不得从标题/Logo/主体高光取补底色，不复制放大整张图充当背景以免出现重复主体，不添加新插画，也不描画地面曲线、建筑轮廓或其他原图元素来延展构图。禁止先人为缩图制造留白再补底。补底不能越出 Hero，也不能改 UI 卡片的 Paint。
 
 以上仅为 `kvFitPlan` 中的 KV 适配例外，不放开 Hero 外框、页面布局、UI 几何、蒙版、混合模式、字体或文案保护。所有既有 UI 节点的相对顺序保持不变；因新增 KV 节点导致索引变化时，用原稿→副本节点映射对照，不能跳过整段结构审计。
 
@@ -202,6 +212,7 @@ fitMode: preserve-scale-bottom-crop / contain，用户依据
 imageFit: 单一 s、原设计尺寸、imageX/imageY/imageWidth/imageHeight、对齐理由、可见/下方截去区域
 carrier: 原/新节点 ID、父级与层级、原/新 Paint 模式和变换
 backdrop: none 或节点/Fill、环境取色证据、配方与边界
+seamTransition: none 或独立载体、杂色下缘依据、页面背景色、Alpha/transform、覆盖范围、层级及关键内容避让
 allowedMutations: 逐节点 ID/路径、Paint 索引、允许属性及前后值
 kvLockedSubtreeRootIds / kvLockedSubtreeFingerprint / kvLockedSubtreeScreenshot
 hiddenKvAssets / suppressedOldKvPaints / protectedHeroUiIds
@@ -213,16 +224,16 @@ renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 K
 
 ## 6. 复制和替换
 
-在 `clone-and-kv` 阶段：
+这些步骤在 Phase 4 本地规划，并在 Phase 6 的唯一写入调用中执行：
 
-1. 用稳定 ID 重读原稿，确认关键快照未变化。
+1. 用唯一原稿快照的紧凑指纹在调用开始处确认原稿未变化，不重新传输整树。
 2. 只调用一次 `clone()`，明确 `appendChild` 到原 `PAGE`。
 3. 保持副本名称、`y`、尺寸，以及 KV 适配例外之外的内部结构。
 4. 在原稿右侧寻找无碰撞位置，240px 是默认起始间距而非必需值；可按现有画布空间调整，保持副本根 y，且不得移动现有节点。
 5. 按第 5 节执行 `kvFitPlan`，仅替换/适配白名单内副本 KV 主图、必要补底及被替代的旧 KV 资产；复制 Paint 数组后重新赋值。
-6. 返回原/副本 ID、位置、Paint 索引、新旧 imageHash、尺度/裁切适配记录和 Hero 实际截图。
+6. 返回原/副本 ID、位置、Paint 索引、新旧 imageHash、尺度/裁切适配记录和节点映射；实际截图统一在 Phase 7 终审调用取得。
 
-本阶段禁止任何 UI 颜色写入；KV 专属环境补底属于图像适配，可在本阶段执行。新 KV 放置完成后立即冻结锁定子树，后续阶段不能把它当作副本 UI 全树的一部分参与颜色解绑或主题映射。若调用失败，先检查是否已经生成副本，禁止盲目再次复制。
+KV 放置后在同一调用内立即冻结锁定子树，随后解绑和颜色操作遇到该根必须停止下钻。若调用失败，按回执报告是否已生成副本或发生部分写入，禁止盲目再次复制。
 
 ## 7. 建立 `mutationPlan`
 
@@ -238,41 +249,19 @@ renderEvidence: Hero 截图、实际尺度与下方裁切符合计划、复合 K
 是否需要实例本地覆盖或解绑及原因
 ```
 
-同时按《局部试色与执行工具》第 6 节建立 `mutationPlan.regionPlan`：卡片/完整视觉区域是 Phase 6 的完成单位，角色配方仍可跨卡复用。视觉上归属卡片但位于其 Frame 子树外的兄弟叠层不得漏登记；页级共享底色只登记一次，其他区域引用其状态。
+同时建立 `mutationPlan.regionPlan`：卡片/完整视觉区域是覆盖归属单位，不是独立写入批次。视觉上归属卡片但位于其 Frame 子树外的兄弟叠层不得漏登记；页级共享底色只登记一次，其他区域引用其状态。
 
 把 `kvLockedSubtreeRootIds` 作为所有区域计划的 `excludedSubtreeRootIds`。工具建立允许写入集合、扫描旧色或遍历颜色绑定时遇到这些根必须停止下钻；不是只保护根节点本身。任何 `operations[].cloneId` 落入锁定子树均为预执行失败，不能先写后恢复。
 
-按《局部试色与执行工具》第 1 节建立 `trialScenes`、依赖和精确写入通道，再汇总 `representativeNodeIds`。覆盖普通卡、收益复合卡、标题、多层功能 Icon、小按钮、一级 Tab 和 CTA 的实际角色；按《叠层合成审计》区分非等价材质、状态和背景。先列实例→代表映射，再写色；必要共享背景 Paint 单独登记为 `sharedContextPaths`，不能只写前景、用旧背景验证新方案。
+按《局部试色与执行工具》第 1 节建立覆盖全实例的 `reviewScenes`、依赖和精确写入通道。覆盖普通卡、收益复合卡、标题、多层功能 Icon、内部容器、进度/状态、小按钮、一级 Tab 和 CTA；按《叠层合成审计》区分非等价材质、状态和背景。必要共享背景 Paint 单独登记为 `sharedContextPaths`。
 
 保护节点/区间与写色白名单必须无交集；仅因保护区域与普通内容同属一个实例，不能扩大跳过范围。按《颜色决策规则》第 5、8 节规划 `cardAtmosphereReview` 与 `buttonCompositeReview`；强度差异分别登记 `atmosphereMutations` / `buttonMaterialAlphaOverrides`，包含节点、通道/索引、层职责、原/目标值及合成问题。
 
-## 8. 分阶段颜色写入
+## 8. 单次批量写入
 
-颜色写入必须是相互独立的调用：
+唯一写入调用只执行 `mutationPlan.writePlan` 中已冻结的结构与颜色操作。调用内部顺序是 `verify-source → clone → kv-fit-and-lock → detach/unbind → apply-all-color-leaves → verify-each-operation → return-receipt`。禁止通过全树遍历、旧色相、坐标、面积或名称临场发现并修改计划外节点；依赖节点不自动获得写权限。
 
-```text
-representative-trial → trial-review(pass) → expand
-```
-
-### 代表试色
-
-- 只允许修改 `trialScenes` 中代表节点、必要 Paint 后代及确切共享背景通道；依赖节点不自动获得写权限。
-- 禁止通过全树遍历、旧色相、坐标、面积或名称发现并修改其他节点。
-- 每个区域调用都传入 `excludedSubtreeRootIds=kvLockedSubtreeRootIds`；KV 内命中的旧 UI 相似色不进入残色计数，也不触发自动修正。
-- 只读遍历可以进行，但写入必须由 ID 白名单驱动。
-- 返回 `representativeMutatedNodeIds`，任何白名单外节点都使本阶段失败。
-- 彩度、对比度或高光合成不满足目标时，在同一副本的同一白名单内依次写入候选配方并截图，记录每次实际使用的配方与结果，最终恢复选中的配方；禁止把仅有色板/文字描述的方案记为已渲染比较。
-
-完成整个局部场景后再取 1:1 图并观察彩色、灰度、模糊和缩略图；整页图只检查上下文及意外影响，未扩展区域不参与本阶段残留/整页美观判定。按《局部试色与执行工具》第 2 节封存逐场景视觉证据与指纹，必要场景均有效通过后才能汇总 PASS。无改善时按其第 1 节重新诊断，不反复盲试。
-
-### 全页扩展
-
-- 必须在后续独立调用中验证对应场景门禁和新鲜读回指纹；配方、共享背景、映射或祖先变化使相关门禁失效，不能只查历史 PASS。
-- 按 `mutationPlan` 的角色映射扩展，返回 `expansionMutatedNodeIds`。
-- 按 `regionPlan` 一次完成一张卡片或其他完整视觉区域，区域内按背景/表面→材质→文字/Icon→操作状态的依赖顺序处理；请求超限时只在该区域内拆技术批次，不跨区域穿插。组合完成后统一截图并完成该区残色/保护/覆盖检查，通过后再进入下一区域。每批属性读回与保护检查不延后；不能用通用旧色扫描脚本覆盖全页。
-- 一张有效区域截图可复用到多个角色检查；只重截变化区域，最终仍核对逐实例上下文和整页累计视觉重量。
-
-所有批次的前值、目标值、部分失败和重试统一按《局部试色与执行工具》第 3 节落盘与恢复。正常属性批次不混入 clone/detach/增删层，失败后先读回，不假定异常意味着没有任何写入。
+技术分块只能是同一程序中的数组切片或函数调用，不能转化为多个 `use_figma` 请求。每个操作携带 before/after 指纹，setter 后立即核对该属性；最终整树与截图统一留给一次 Phase 7 终审。任一白名单外修改、变量回弹、KV 锁定子树命中、部分失败或冲突都使写入结果为未完成，不自动补写或重放。
 
 允许写入的普通属性仅为：
 
@@ -313,13 +302,10 @@ GRADIENT Paint: gradientStops[].color/alpha（保持结构有效开关）
 ```text
 sourceFrameId / cloneFrameId / clonePosition / kvReplacement / kvFitPlan
 visualSurfaceCarrierMap / paintLayerRecipes
-regionPlan（区域归属、逐区状态与验收证据）
-representativeNodeIds / representativeMutatedNodeIds
-representativeCoverage
-trialScenes / trialGates / sharedContextPaths
-trialGateStatus（有效场景门禁汇总）与截图时间证据
-batches（逐操作前值/目标值/读回、恢复和冲突）/ runId
-expansionMutatedNodeIds
+regionPlan（区域归属与全量覆盖）/ reviewScenes / sharedContextPaths
+writePlan / expectedCloneHash / offlinePreflight
+singleWriteReceipt（逐操作前值/目标值/同次核对、冲突）/ runId
+finalReviewReceipt（原稿指纹、完整副本快照、整页与 1:1 截图）
 localInstanceOverrides / detachedInstances
 protectedMediaOverlayIds
 protectedRankTop3Ids / protectedRankTop3PaintRanges / protectedColorRestorations
@@ -331,4 +317,4 @@ skippedNodes 与原因
 executionPhaseLog
 ```
 
-禁止仅在最终回复中补写阶段记录。时间和节点集合必须证明代表试色发生在全页扩展之前。
+禁止仅在最终回复中补写阶段记录。调用计数必须证明完整原稿读取一次、设计写入一次、最终审查一次；任何显式例外另列原因与实际调用。

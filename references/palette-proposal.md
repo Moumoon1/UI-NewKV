@@ -32,16 +32,18 @@ Phase 2 完成 KV 取色后、Phase 3 冻结 Paint Recipe 前执行。生成任�
 
 每套方案严格按以下顺序形成，不能先拍 Hex 再补理由：
 
-1. **先锁定一个表面家族。** 从稳定环境锚点中为该方案选定唯一 `surfaceFamilyId`，再从它派生 `page/card/container/border`。比较候选时先看环境身份，再看连续面积、空间稳定性、实际 Hero 可见下缘的连接关系及延展后是否自然；大面积连续环境优先于人物、建筑、树叶、标题、局部反光等前景物。底部区域若被局部前景、阴影、装饰或具体纹理主导，排除为页面背景锚点并回到整张 KV 的大范围环境色；若是大片草原、海面、天空、雾光、较纯颜色或低纹理渐变，则把底部延伸列为强候选，但仍与其他连续环境按空间合理性、整页面积效果、卡片层级和视觉舒适度比较，不自动胜出。把结果写入 `heroBottomExtensionDecision`：选择延伸时记录接缝起点和纯色/渐变延续配方；未选择时记录更优环境证据及衔接方式。多个环境锚点只是候选，不等于可以逐个分配给不同大面积表面；除非 KV 本身存在可延展到 UI 的连续多色环境，并已记录其空间关系，否则四个大面积表面不得跨到另一色相/冷暖家族。
+1. **先比较背景候选，再为每套方案确定一个表面家族。** 从整张 KV 的稳定环境和实际下缘色区建立 `backgroundCandidates`，记录来源、连续面积、稳定性、延展风险、接色办法及保留/淘汰依据。不因地面、装饰或前景标签提前淘汰大片较纯色区；孤立人物、文字、反光像素仍不作为主锚点。有多个可行家族时默认保留 2 个明显不同的背景方向，第三个同样有价值时可保留 3 个；仅一个有依据时不凑数。用户点名的可行方向须纳入比较。
+   在同一 UI 模式、近似明度/彩度力度、相同卡片层级和可比交互方向下做只读面积预览，包含源 KV 下缘、衔接区、背景与卡片关系。看过预览后再确定主推荐和备选，不能先锁家族、先拍 Hex 或凭未验证的观感猜测排除。每套方案内部仍确定唯一 `surfaceFamilyId`，从它派生 `page/card/container/border`；不同背景分别成为方案，不逐卡混用。背景综合来源、空间稳定性、整页面积、层级与舒适度选择；底部色是强候选及接缝依据，不自动决定整页底色。选其他背景时仍须渐变衔接，不能硬切。
+
 2. **再建立显著性与明度拓扑。** 结合 `targetUiMode/targetSurfaceDepth`、`semanticPriorityMap` 和原稿层级，先写 `targetSalienceOrder / roleLightnessPlan / targetLuminanceTopology`，明确页面→卡片→容器的可辨关系，以及按钮/CTA 相对真实宿主的主体明度方向。`targetUiMode=light` 时默认使用明亮但不漂白的表面拓扑：页面背景保持较高明度和可识别主题彩度，但不能接近无色白；撞色方案须冻结 `cardSurfaceStrategy=tinted-near-white|pure-white-atmosphere`：卡片通常比页面更亮并显著降低 HSB 的 S；当页面/KV 彩度高、卡片面积或重复较大时可用 S=0 的纯白稳定底，只在原有顶部氛围/Chrome 保留淡主题色。内部容器在二者之间或以同家族轻微深浅差分层。若原结构需要其他顺序，须证明卡片边界仍清楚且页面没有灰白化。不能用趋同的表面明度冒充层次，也不能让与 KV 光照和目标表面深度不符的暗部占据大面积。
-3. **再建立彩度、受光与强调家族目标。** 写入 `colorClarityPlan.lightnessAndChroma` 与 `colorClarityPlan.hsbGuardrails`。页面中的主要操作只按 UI 模式和尺寸分为 `深色 UI 小按钮 / 深色 UI 大按钮 / 浅色 UI 小按钮 / 浅色 UI 大按钮` 四类；按钮自身方向另记 `bright|metallic|clean-deep`，高光、渐变、立体不新增类型。普通鲜亮按钮的所有可见主体本色色标以 `B=100` 为默认门禁；用户指定的 `gold-bright` 暖亮金示例允许 `B98–100` 的近满明度色标。更低 B 只允许用于深色 UI 中有可靠金属证据的金属主体/金属深端分段，或浅色 UI 的已选 `clean-deep` 按钮，且须单列来源、面积与真实宿主证据。白色高光、透明端、极小阴影和结构层不参与主体门禁。大小按钮分别记录亮端、主体中间调、稳定暗端、包边/深度层、面积职责与排除项，分别 PASS 后才比较共同 `buttonPrimary`。普通鲜亮 Icon 的稳定主体色标可优先 `B=100`；`B=100` 本身不判过亮。每案冻结 `iconPairPlan`，用真实卡片、底托、图形面积和重复频率联合选择图形/底托配方；原 Icon 的可见渐变若由低 S/高 B 到高 S/高 B 建立层次，目标须逐 stop 保留可感知差异，不能把全部 stop 指向同一个 `icon` Hex。为每案先比较约 180° 对向色与 KV 高彩高明度色在真实宿主上的预期突出程度，再写 `accentFamilyPlan`：`iconSource=surface-environment`，从背景/卡片连续环境家族派生 Icon 稳定主体并记录来源、派生的明度/彩度与重复面积；`targetUiMode=dark` 时设 `darkNumberSync=icon`，六色提案的 `number` 和 `icon` 必须使用相同 Hex。浅色 UI 的高亮数字可按宿主独立选择，但数字/Icon/按钮默认不出现第三个显著高彩家族。金属 Icon 的小面积环境反射不计作稳定主体，不能靠反射把 Icon 主体换成另一家族。同时冻结 `controlColorSalienceOrder=icon-container < selected-tab < primary-button`，不要求按钮 B 高于 Icon B。
+3. **再建立彩度、受光与强调家族目标。** 写入 `colorClarityPlan.lightnessAndChroma` 与 `colorClarityPlan.hsbGuardrails`。页面中的主要操作只按 UI 模式和尺寸分为 `深色 UI 小按钮 / 深色 UI 大按钮 / 浅色 UI 小按钮 / 浅色 UI 大按钮` 四类；按钮自身方向另记 `bright|metallic|clean-deep`，高光、渐变、立体不新增类型。普通鲜亮按钮的所有可见主体本色色标以 `B=100` 为默认门禁；用户指定的 `gold-bright` 暖亮金示例允许 `B98–100` 的近满明度色标。更低 B 只允许用于深色 UI 中有可靠金属证据的金属主体/金属深端分段，或浅色 UI 的已选 `clean-deep` 按钮，且须单列来源、面积与真实宿主证据。白色高光、透明端、极小阴影和结构层不参与主体门禁。大小按钮分别记录亮端、主体中间调、稳定暗端、包边/深度层、面积职责与排除项，分别 PASS 后才比较共同 `buttonPrimary`。普通鲜亮 Icon 的稳定主体色标可优先 `B=100`；`B=100` 本身不判过亮。每案冻结 `iconPairPlan`，用真实卡片、底托、图形面积和重复频率联合选择图形/底托配方；原 Icon 的可见渐变若由低 S/高 B 到高 S/高 B 建立层次，目标须逐 stop 保留可感知差异，不能把全部 stop 指向同一个 `icon` Hex。为每案先比较约 180° 对向色与 KV 高彩高明度色在真实宿主上的预期突出程度，再写 `accentFamilyPlan`：`iconSource=surface-environment`，从背景/卡片连续环境家族派生 Icon 稳定主体并记录来源、派生的明度/彩度与重复面积；`targetUiMode=dark` 时设 `darkNumberSync=icon`，六色提案的 `number` 和 `icon` 必须使用相同 Hex。浅色 UI 的高亮数字可按宿主独立选择，但数字/Icon/按钮默认不出现第三个显著高彩家族。任务/作品卡按《颜色决策规则》第 6.1 节预先声明 `taskWorkDataAccent` 局部配方及其用户偏好依据；该配方可独立于公开 number/icon，允许形成有依据的额外强调家族，须纳入方案预览与面积/层级判断，不能在落稿时才临时加色。金属 Icon 的小面积环境反射不计作稳定主体，不能靠反射把 Icon 主体换成另一家族。同时冻结 `controlColorSalienceOrder=icon-container < selected-tab < primary-button`，不要求按钮 B 高于 Icon B。
 4. **最后才派生代表 Hex。** Hex 必须服务前三步的关系，并在预览板上按近似真实面积检查；不能期待 Phase 3 的材质展开或 Phase 5 的高光补救一套本身已灰闷、过暗或表面割裂的平面色板。
 
 提案展示前逐套记录 `proposalColorPreflight`：
 
 ```text
 surface-family-coherence       page/card/container/border 来自同一表面家族，且层级可辨
-surface-anchor-validity        主锚点来自可延展环境；底部候选满足可见、连续、面积、纯度与环境身份条件
+surface-anchor-validity        主锚点有可延展色区证据；背景先比较后选定，不因前景标签排除稳定下缘色区
 hero-bottom-extension         已判断底部是否适合延伸、是否采用及原因；采用时接缝连续，未采用时有更优环境与衔接证据
 luminance-topology             表面深度与交互主体明度方向符合当前模式和 KV 气质
 lightness-and-chroma           浅色 UI 的页面明亮有彩；撞色卡片按 cardSurfaceStrategy 降 S、提明度，可用纯白稳定底；主操作按真实宿主选择明亮有彩或有证据的干净深色，不灰闷
@@ -57,11 +59,11 @@ palette-role-control           大面积色相受控；撞色只集中在小面�
 preview-review                 按角色面积预览后仍满足以上关系
 ```
 
-任一项为 `FAIL/UNKNOWN` 时，留在 Phase 2 修正或淘汰该候选，不能展示给用户选择。同一 UI 模式的所有候选默认保持同一个 `surfaceFamilyId` 与表面明度拓扑，只改变交互方向；只有明确要比较不同表面家族且两者各自有 KV 环境证据时才允许不同，并说明变量，避免一次改变过多维度。
+任一项为 `FAIL/UNKNOWN` 时，留在 Phase 2 修正或淘汰该候选，不能展示给用户选择。同一背景方向的交互对照保持同一个表面家族与明度拓扑；不同背景各有来源与可比面积预览证据，不必等待用户另行要求才展示。
 
-## 3. 固定的方案矩阵
+## 3. 基础交互覆盖与背景备选
 
-先按金属证据决定矩阵，再按新 KV 明暗决定需要覆盖的 UI 模式：
+先按金属证据及新 KV 明暗确定基础交互覆盖。下表是主推荐背景的基础方案，不是全部方案的固定上限：
 
 | 新 KV 情况 | 无可靠金属证据 | 有可靠金属证据 |
 |---|---|---|
@@ -73,9 +75,13 @@ preview-review                 按角色面积预览后仍满足以上关系
 
 - 无可靠金属证据时，沿用 `A/C`：`A=analogous`，`C=contrast`；撞色优先比较可靠的 `hue-opposition` 候选，并允许有证据且更突出的 `kv-vivid-accent` 胜出。
 - 有可靠金属证据时，改用 `M/G/D`：`M=metallic-analogous`，`G=gold-bright`，`D=clean-deep`。三者是按钮方向，不得互相合并或换标签。
-- 用户明确限制 UI 深浅时，只保留该模式下的 2 套无金属方案或 3 套金属方案。
+- 用户明确限制 UI 深浅时，保留该模式下的基础交互方向，再加入背景备选。
 
-用户在当前请求中明确限制“只看浅色 UI”“只看深色 UI”或某一按钮方向时，删除不符合要求的方案，不拿无关方案让用户再次选择；否则按上表完整输出。
+用户在当前请求中明确限制“只看浅色 UI”“只看深色 UI”或某一按钮方向时，删除不符合要求的方案，不拿无关方案让用户再次选择；否则保留上表基础模式与交互覆盖，并按背景备选规则扩充。
+
+存在多个可行背景家族时，在基础方案之外补充 1–2 套有明显区别的完整六色方案，通常每个备选背景选择一个最协调的交互方向；每个适用 UI 模式都须展示可行背景备选。单模式、无金属且有两个可行背景时，默认展示 3–4 套，也可采用“两种背景 × 同色系/撞色”四案。多模式或金属任务通常保留 4–8 套，不枚举所有背景×模式×按钮组合；用户指定数量/方向时优先遵循，只有一个有依据背景时不凑数。
+
+新增背景方向只增加只读取色、候选配方与本地预览：复用同一次原稿/KV 证据，批量渲染一张方案板。选定前不逐案读取整树、创建 Figma 副本或执行完整原生预演；选定后只为该方案展开全页计划和必要预演。不承诺未经测量的 token 或耗时数值。
 
 ## 4. 交互候选怎样搭配
 
@@ -100,11 +106,11 @@ preview-review                 按角色面积预览后仍满足以上关系
 - `metallic-analogous`：从本次金属的稳定本色、中间调、暗部和高光派生同色系金属按钮。银色可得到银、银蓝灰或环境反射后的冷金属色；金/玫瑰金按实际画面派生。它仍是同色系金属，不因深浅差被叫作撞色。
 - `gold-bright`：固定提供一套正常明亮金色按钮作为金属对照。优先从类似 `#FFEED7→#FFC58A`、`#FFEEC6→#F9DB92`、`#FFE5A3→#FFC165` 的暖亮范围建立主体与暗部关系，再按当前 KV 光照微调；不得把示例机械照抄，也不得偏到暗铜、棕橙、土黄。主体中间调必须明确呈现金黄，具有较高感知明度、有效彩度和充足受光面积；暗部只负责塑形，高光不能成为唯一“金色”证据。按钮字默认使用深棕色，并分别核对最亮、最暗和文字覆盖区；只有深棕确实失败且另有明确视觉证据时才允许偏离，不能先把金色整体压暗来迁就白字。
 - `clean-deep`：固定提供一套干净深色按钮，从 KV 的深色主体、标题、金属暗部或稳定环境深端选择最协调的有来源家族。它必须有清楚色相和稳定中间调，不得灰黑、脏褐或只剩亮边。以 `#BE9D72→#966F3F` 的明暗关系作为校准：亮端可落在约 `S 40–45 / B 70–80`、稳定暗端约 `S 50–65 / B 58–65`，稳定主体最低执行 `S >= 40, B >= 58`；实际 Hue 仍从本次 KV 取证，不固定使用棕色。
-- 三套方案共用相同页面、卡片和 Tab 表面家族；主要小按钮与 CTA 在各自方案内共用该方案的 `buttonPrimary`。金色不扩散到 Tab，Tab 仍保持表面同系。
+- 同一背景方向下的三个按钮对照共用相同页面、卡片和 Tab 表面家族；主要小按钮与 CTA 在各自方案内共用该方案的 `buttonPrimary`。金色不扩散到 Tab，Tab 仍保持表面同系。
 
 ## 5. 每套方案的交付格式
 
-无金属矩阵使用 `D-A/L-A/D-C/L-C`。金属矩阵使用 `D-M/L-M`（同色系金属）、`D-G/L-G`（正常明亮金色）、`D-D/L-D`（干净深色）。内部提案增加 `buttonVariant=analogous|contrast|metallic-analogous|gold-bright|clean-deep`，并继续保存来源锚点、表面家族、`cardSurfaceStrategy`、`iconPairPlan`、明度拓扑、彩度/受光目标、优势、风险和 `proposalColorPreflight`。面向用户的预览只展示以下六个冻结锚点：
+无金属矩阵使用 `D-A/L-A/D-C/L-C`。金属矩阵使用 `D-M/L-M`（同色系金属）、`D-G/L-G`（正常明亮金色）、`D-D/L-D`（干净深色）。有多个背景时，方案 ID 加唯一的 `-S1/-S2` 后缀并标注背景方向，避免重名。内部提案增加 `buttonVariant=analogous|contrast|metallic-analogous|gold-bright|clean-deep`，并继续保存来源锚点、表面家族、`cardSurfaceStrategy`、`iconPairPlan`、明度拓扑、彩度/受光目标、优势、风险和 `proposalColorPreflight`。面向用户的预览只展示以下六个冻结锚点：
 
 ```text
 background  页面连续背景代表色
@@ -117,13 +123,13 @@ tab         选中 Tab 的表面同系代表色
 
 用相同角色顺序并排展示方案，并用 `scripts/render_palette_proposals.py` 生成只读角色预览板；背景和卡片按较大面积表达，数字、Icon、按钮和 Tab 按局部面积表达。渲染器输入只是 `themeDecision.paletteProposal` 的展示投影：`colors` 必须且只能包含上述六个角色，门禁证据仍保存在完整提案对象中。输出图片和输入哈希清单只保存到本次 `runWorkspace`，不得落入稳定 `artifacts/` 或复用旧提案。必须看过预览再完成 `preview-review`，不能只验证 JSON 字段。提案阶段不复制页面、不替换 KV、不写 Figma UI，也不把预览板当成真实材质试色通过；任务成功完成后随 `runWorkspace` 一并清理，用户明确要求保留审计包除外。
 
-按钮预览字色分情境：仅特别鲜艳的无金属撞色按钮设置 `buttonTextPriority=vivid-contrast-white`，优先显示白字；渲染器不得仅因深字静态比值较高替换它。其他按钮按材质、宿主和可读性选择字色，预览的自动字色仅是临时候选，不能被当成 Figma 定稿；`gold-bright` 仍默认深棕字。需要显式指定预览字色时，同时提供 `buttonTextColor` 与非空 `buttonTextEvidence`：特别鲜艳撞色若指定深字，证据须指向真实 1:1 白字对比度不足及深字选择依据；其他方案的证据说明情境选择。输出清单记录实际预览字色，Phase 5 再用真实按钮验证。
+按钮预览字色分情境：仅特别鲜艳的无金属撞色按钮设置 `buttonTextPriority=vivid-contrast-white`，优先显示白字；渲染器不得仅因深字静态比值较高替换它。其他按钮按材质、宿主和可读性选择字色，预览的自动字色仅是临时候选，不能被当成 Figma 定稿；`gold-bright` 仍默认深棕字。需要显式指定预览字色时，同时提供 `buttonTextColor` 与非空 `buttonTextEvidence`。输出清单记录实际预览字色，Phase 5 在 `expectedClone` 的完整按钮材质与宿主中验证，Phase 7 用最终真实截图复核。
 
 渲染器对深色方案执行 `number/icon` 公开 Hex 的 RGB 精确相等预检，失败即拒绝生成预览；Icon 是否确实来自连续背景环境、共色在真实宿主上是否清楚仍由只读取色证据与视觉预览判断，不以这个数值检查代替。
 
 用户选定方案后，把六个值保存为 `schemeAnchorContract`。Phase 3 可为文字、描边、容器、氛围和材质层派生更多色标，但必须引用这六个锚点并保持角色关系：页面/卡片不得静默换家族，关键数字不得改用无关强调色，普通功能 Icon 图形须引用或有依据地派生自 `icon`，主要小按钮与 CTA 的主体必须共同引用 `button`，Tab 必须共同引用 `tab`；Icon 底托不是第七个公开锚点，须从表面方向派生，并与 `tab/button` 共同满足 `icon-container < selected-tab < primary-button`，同时在真实卡片上保持可见。渐变暗部、高光和反射不是额外主题色，不能用它们把最终视觉改成另一套方案。任何锚点家族、代表值或上述显著性顺序的实质变更都使用户选择及下游门禁失效，必须重新展示方案并确认。
 
-六个值必须各自绑定至少一个稳定可见的 `anchorId` 目标通道，RGB 与公开方案值一致。`tab` 不能只保持“同色系”却在落稿时改成 `button` 或 `icon` 的代表色；`button` 也不能因材质展开而从用户选择的代表色漂到另一个橙/黄/蓝。代表试色写入后先读回锚点一致性，再允许扩展；任一错绑或漂移都回到 Phase 3，若需要改变公开锚点则必须重新展示方案让用户确认。
+六个值必须各自绑定至少一个稳定可见的 `anchorId` 目标通道，RGB 与公开方案值一致。`tab` 不能只保持“同色系”却在落稿时改成 `button` 或 `icon` 的代表色；`button` 也不能因材质展开而漂移。写入前在 `expectedClone` 核对，终审在真实副本核对；任一错绑或漂移直接 FAIL。
 
 ```sh
 python3 scripts/render_palette_proposals.py palette-proposal.json palette-proposal.png
@@ -142,4 +148,4 @@ themeDecision.paletteSelection.selectedAt
 themeDecision.paletteSelection.userInstruction
 ```
 
-选择前禁止进入 Phase 3 的最终配方冻结、Phase 4 复制/KV 替换和任何 UI 写色。选择后由该方案展开完整 Paint Recipe，再执行预检、代表试色、全页扩展和验收；后续合法的材质微调不重复请求配色选择。用户改变方案时使旧配方、试色门禁及其下游证据失效，但继续使用同一原稿审计；尚未创建副本时不要提前创建。
+选择前禁止进入 Phase 3 的最终配方冻结、Phase 4 写入计划和任何 UI 写色。选择后由该方案展开完整 Paint Recipe，生成 `expectedClone`、离线全量预检、一次批量写入和一次终审。用户改变方案时重建本地投影；尚未创建副本时不要提前创建。

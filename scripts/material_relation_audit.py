@@ -49,6 +49,19 @@ def max_spread(values, metric) -> float:
     return max(pairwise(values, metric), default=0.0)
 
 
+def role_groups(values, tolerance=0.015):
+    """Cluster repeated source roles (for example alternating metal stops)."""
+    groups = []
+    for index, value in enumerate(values):
+        for group in groups:
+            if rgb_distance(value, values[group[0]]) <= tolerance:
+                group.append(index)
+                break
+        else:
+            groups.append([index])
+    return groups
+
+
 def rgb_distance(left, right) -> float:
     return math.dist(left[:3], right[:3])
 
@@ -145,13 +158,36 @@ def audit_material_relations(source, target, node_map, plan):
                         inverted_axes.append(axis)
                         break
 
-        if collapsed_axes or inverted_axes:
+        groups = role_groups(source_colors, float(relation.get("sourceRoleGroupTolerance", 0.015)))
+        repeated_groups = [group for group in groups if len(group) > 1]
+        role_group_errors = []
+        if repeated_groups and len(groups) > 1 and relation.get("preserveRoleGroups", True):
+            max_within = float(relation.get("maximumTargetRoleGroupSpread", 0.035))
+            min_between = float(relation.get("minimumTargetRoleSeparation", 0.012))
+            for group in groups:
+                within = max_spread([target_colors[index] for index in group], rgb_distance)
+                if within > max_within:
+                    role_group_errors.append({"kind": "source-role-split", "members": group,
+                                              "targetSpread": round(within, 4), "limit": max_within})
+            for left in range(len(groups)):
+                for right in range(left + 1, len(groups)):
+                    distances = [rgb_distance(target_colors[a], target_colors[b])
+                                 for a in groups[left] for b in groups[right]]
+                    if distances and min(distances) < min_between:
+                        role_group_errors.append({"kind": "source-roles-collapsed",
+                                                  "groups": [groups[left], groups[right]],
+                                                  "minimumTargetDistance": round(min(distances), 4),
+                                                  "limit": min_between})
+
+        if collapsed_axes or inverted_axes or role_group_errors:
             finding = {"relationId": relation_id,
                        "unitId": relation.get("unitId"),
-                       "reason": "material color relation collapsed" if collapsed_axes
-                       else "material color relation order inverted",
+                       "reason": ("material role-group pattern changed" if role_group_errors else
+                                  "material color relation collapsed" if collapsed_axes else
+                                  "material color relation order inverted"),
                        "collapsedAxes": sorted(set(collapsed_axes)),
                        "invertedAxes": sorted(set(inverted_axes)),
+                       "roleGroupErrors": role_group_errors,
                        "metrics": {axis: {key: round(value, 4) for key, value in row.items()}
                                    for axis, row in metrics.items()},
                        "members": resolved}

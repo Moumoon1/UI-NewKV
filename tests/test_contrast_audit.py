@@ -16,7 +16,7 @@ class ContrastChecks(unittest.TestCase):
                                      {'type': 'SOLID', 'color': {'r': .4, 'g': .5, 'b': .6}}]}}}}
         self.actual = copy.deepcopy(self.source)
         self.frozen = [{'id': 'plate-host', 'kind': 'surface', 'nodeIds': ['plate', 'host'],
-                        'sampleIds': ['center']}]
+                        'sampleIds': ['center'], 'minimumDeltaE': 3}]
         host = {'colorPath': '/nodes/host/props/fills/0/color'}
         fg = {'layers': [host, {'colorPath': '/nodes/plate/props/fills/0/color',
                                'alphaPaths': ['/nodes/plate/props/opacity']}]}
@@ -118,6 +118,25 @@ class ContrastChecks(unittest.TestCase):
         self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': 0, 'g': 0, 'b': 0}
         self.assertEqual(self.contextual_check()['status'], 'pass')
 
+    def test_contextual_surface_rejects_barely_visible_composited_boundary(self):
+        self.actual['nodes']['plate']['props']['fills'][0]['color'] = {'r': .9, 'g': .95, 'b': 1}
+        self.actual['nodes']['plate']['props']['opacity'] = .03
+        self.assertEqual(self.contextual_check()['status'], 'fail')
+        self.frozen[0].pop('minimumDeltaE')
+        with self.assertRaisesRegex(ValueError, 'minimumDeltaE'):
+            self.contextual_check()
+
+    def test_subtle_inner_surface_rejects_excessive_composited_depth(self):
+        self.frozen[0]['maximumDeltaE'] = 8
+        self.assertEqual(self.contextual_check()['status'], 'fail')
+        self.actual['nodes']['plate']['props']['opacity'] = .1
+        result = self.contextual_check()
+        self.assertEqual(result['status'], 'pass')
+        self.assertLessEqual(result['samples'][0]['deltaE76']['actual'], 8)
+        self.frozen[0]['maximumDeltaE'] = 2
+        with self.assertRaisesRegex(ValueError, 'maximumDeltaE'):
+            self.contextual_check()
+
     def test_sample_cannot_downgrade_frozen_policy_or_change_context(self):
         self.spec['policy'] = 'contextual'
         with self.assertRaisesRegex(ValueError, 'differs from frozen'):
@@ -141,7 +160,7 @@ class ContrastChecks(unittest.TestCase):
             layer['colorPath'] = layer['colorPath'].replace('plate', 'weak')
             layer['alphaPaths'] = [p.replace('plate', 'weak') for p in layer['alphaPaths']]
         self.spec['pairs'].append(weak)
-        self.frozen.append({k:weak[k] for k in ('id', 'kind', 'nodeIds', 'sampleIds')})
+        self.frozen.append({k:weak[k] for k in ('id', 'kind', 'nodeIds', 'sampleIds', 'minimumDeltaE')})
         self.spec['emphasisOrders'] = [{'id': 'selected', 'strongerPairId': 'plate-host',
                                       'weakerPairId': 'weak-host', 'sampleId': 'center'}]
         self.assertEqual(self.contextual_check()['status'], 'pass')
@@ -190,6 +209,28 @@ class ContrastChecks(unittest.TestCase):
         checked = contrast.compare_contrast(self.source, self.actual, self.spec, self.frozen, orders)
         self.assertEqual(checked['status'], 'fail')
         self.assertEqual(checked['emphasisOrders'][0]['status'], 'fail')
+
+    def test_state_group_requires_every_source_strength_relation(self):
+        self.source['nodes']['weak'] = copy.deepcopy(self.source['nodes']['plate'])
+        self.source['nodes']['weak']['props']['fills'][0]['color'] = {'r': .7, 'g': .8, 'b': .9}
+        self.actual = copy.deepcopy(self.source)
+        self.spec['sourceHash'] = digest(self.source); self.spec['actualHash'] = digest(self.actual)
+        self.frozen[0].update(kind='state', stateGroupId='progress')
+        self.spec['pairs'][0].update(kind='state', stateGroupId='progress')
+        weak = copy.deepcopy(self.spec['pairs'][0]); weak['id'] = 'weak-host'; weak['nodeIds'] = ['weak', 'host']
+        for key in ('source', 'actual'):
+            layer = weak['samples'][0][key]['foreground']['layers'][1]
+            layer['colorPath'] = layer['colorPath'].replace('plate', 'weak')
+            layer['alphaPaths'] = [p.replace('plate', 'weak') for p in layer['alphaPaths']]
+        self.spec['pairs'].append(weak)
+        self.frozen.append({k: weak[k] for k in ('id', 'kind', 'nodeIds', 'sampleIds', 'stateGroupId')})
+        with self.assertRaisesRegex(ValueError, 'state strength relation missing'):
+            self.run_check()
+        orders = [{'id': 'progress-stronger', 'strongerPairId': 'plate-host',
+                   'weakerPairId': 'weak-host', 'sampleId': 'center'}]
+        self.spec['emphasisOrders'] = orders
+        result = contrast.compare_contrast(self.source, self.actual, self.spec, self.frozen, orders)
+        self.assertEqual(result['status'], 'pass')
 
 
 if __name__ == '__main__':

@@ -101,8 +101,8 @@ def render_palette_proposals(data, output):
     if not isinstance(data, dict) or set(data) - {"title", "schemes"}:
         raise ValueError("input must contain only title? and schemes")
     schemes = data.get("schemes")
-    if not isinstance(schemes, list) or not 1 <= len(schemes) <= 6:
-        raise ValueError("schemes must contain 1 to 6 proposals")
+    if not isinstance(schemes, list) or not 1 <= len(schemes) <= 8:
+        raise ValueError("schemes must contain 1 to 8 proposals")
     ids = []
     for scheme in schemes:
         required = {"id", "targetUiMode", "colors"}

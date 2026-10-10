@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 
-def main():
+def legacy_main():
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=["trial", "expand"])
     parser.add_argument("operations")
@@ -33,6 +33,10 @@ return {mutatedNodeIds:[...new Set([...applied.mutatedNodeIds,image.id,fade.id])
         )
     else:
         print("return applied;")
+
+
+def main():
+    raise SystemExit('Retired task-specific template: use compile_color_mutation_plan.py and the frozen preview/commit workflow.')
 
 
 if __name__ == "__main__":

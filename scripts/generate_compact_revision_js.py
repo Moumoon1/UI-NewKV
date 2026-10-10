@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 
-def main():
+def legacy_main():
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=["trial", "expand"])
     parser.add_argument("current")
@@ -110,6 +110,10 @@ image.resize(414,360);fade.y=300;fade.resize(414,60);mutated.push(image.id,fade.
 """
         )
     print("return {mutatedNodeIds:[...new Set(mutated)],propertyCount:propertyTargets.length,textCount:textTargets.length,capturedAt:new Date().toISOString()};")
+
+
+def main():
+    raise SystemExit('Retired task-specific template: use compile_color_mutation_plan.py and the frozen preview/commit workflow.')
 
 
 if __name__ == "__main__":

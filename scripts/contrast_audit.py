@@ -31,6 +31,27 @@ def contrast(a, b):
     return (high + .05) / (low + .05)
 
 
+def perceptual_lab(rgb):
+    """sRGB/D65 CIELAB for boundary visibility checks."""
+    linear = [unit(v) / 12.92 if v <= .04045 else ((unit(v) + .055) / 1.055) ** 2.4
+              for v in rgb]
+    xyz = [sum(v * w for v, w in zip(linear, row)) / white
+           for row, white in [((.4124564, .3575761, .1804375), .95047),
+                              ((.2126729, .7151522, .0721750), 1.),
+                              ((.0193339, .1191920, .9503041), 1.08883)]]
+
+    def f(value):
+        return value ** (1 / 3) if value > (6 / 29) ** 3 else \
+            value / (3 * (6 / 29) ** 2) + 4 / 29
+
+    x, y, z = map(f, xyz)
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)]
+
+
+def delta_e76(a, b):
+    return math.dist(perceptual_lab(a), perceptual_lab(b))
+
+
 def displayed_color(doc, spec, images):
     """Normal-blend solid stacks, or verified native screenshot pixels."""
     if set(spec) in ({'layers'}, {'host', 'layers'}):
@@ -106,6 +127,23 @@ def contrast_policy(spec, expected_policy, expected_context):
     return policy
 
 
+def transition_policy(theme_transition, policy, context):
+    """Reject a contrast policy that contradicts the reviewed UI-mode change."""
+    if theme_transition not in {'light-to-light', 'light-to-dark',
+                                'dark-to-light', 'dark-to-dark'}:
+        raise ValueError('explicit light/dark themeTransition required for contrast policy')
+    source_mode, target_mode = theme_transition.split('-to-')
+    contrast_policy({'policy': policy, 'decisionContext': context}, policy, context)
+    if context is None:
+        if source_mode != target_mode:
+            raise ValueError('cross-mode themeTransition requires contextual contrast decision')
+        return policy
+    if (context['sourceUiMode'] != source_mode or
+            context['targetUiMode'] != target_mode):
+        raise ValueError('contrast decision modes differ from themeTransition')
+    return policy
+
+
 def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
                      expected_policy='source-baseline', expected_context=None):
     if spec.get('schemaVersion') != 1:
@@ -129,8 +167,25 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
         if minimum is not None and (type(minimum) not in (int, float) or
                 not math.isfinite(minimum) or not 1 <= minimum <= 21):
             raise ValueError('frozen minimumContrast must be a finite ratio in [1,21]')
+        minimum_delta = frozen.get('minimumDeltaE')
+        if minimum_delta is not None and (type(minimum_delta) not in (int, float) or
+                not math.isfinite(minimum_delta) or not 0 <= minimum_delta <= 200):
+            raise ValueError('frozen minimumDeltaE must be finite in [0,200]')
+        maximum_delta = frozen.get('maximumDeltaE')
+        if maximum_delta is not None and (pair['kind'] != 'surface' or
+                type(maximum_delta) not in (int, float) or not math.isfinite(maximum_delta) or
+                not 0 <= maximum_delta <= 200 or
+                (minimum_delta is not None and maximum_delta < minimum_delta)):
+            raise ValueError('frozen surface maximumDeltaE must be finite and >= minimumDeltaE')
         if pair['kind'] not in KINDS or pair['kind'] != frozen['kind']:
             raise ValueError('contrast relationship kind changed')
+        if policy == 'contextual' and pair['kind'] == 'surface' and \
+                (minimum_delta is None or minimum_delta < 3):
+            raise ValueError('contextual surface boundaries require frozen minimumDeltaE >= 3')
+        if pair['kind'] == 'state':
+            group = frozen.get('stateGroupId')
+            if not isinstance(group, str) or not group.strip() or pair.get('stateGroupId') != group:
+                raise ValueError('state relationships require a stable stateGroupId')
         if (not pair.get('nodeIds') or set(pair['nodeIds']) != set(frozen['nodeIds']) or
                 not set(pair['nodeIds']) <= source['nodes'].keys() or
                 not set(pair['nodeIds']) <= actual['nodes'].keys()):
@@ -143,17 +198,23 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
         for sample in samples:
             if not isinstance(sample.get('basis'), str) or not sample['basis'].strip():
                 raise ValueError('actual host / sampling basis required')
-            colors = {}; ratios = {}
+            colors = {}; ratios = {}; deltas = {}
             for key, doc in [('source', source), ('actual', actual)]:
                 colors[key] = {side: displayed_color(doc, sample[key][side], images)
                                for side in ('foreground', 'background')}
                 ratios[key] = contrast(colors[key]['foreground'], colors[key]['background'])
+                deltas[key] = delta_e76(colors[key]['foreground'], colors[key]['background'])
             regressed = ratios['actual'] + 1e-9 < ratios['source']
             failed = ((policy == 'source-baseline' and regressed) or
-                      (minimum is not None and ratios['actual'] + 1e-9 < minimum))
+                      (minimum is not None and ratios['actual'] + 1e-9 < minimum) or
+                      (minimum_delta is not None and deltas['actual'] + 1e-9 < minimum_delta) or
+                      (maximum_delta is not None and deltas['actual'] > maximum_delta + 1e-9))
             results.append({'pairId': pair['id'], 'sampleId': sample['id'], 'kind': pair['kind'],
                             'nodeIds': pair['nodeIds'], 'colors': colors, 'ratios': ratios,
+                            'deltaE76': deltas,
                             'regressedFromSource': regressed, 'minimumContrast': minimum,
+                            'minimumDeltaE': minimum_delta,
+                            'maximumDeltaE': maximum_delta,
                             'status': 'fail' if failed else
                                       ('measured' if policy == 'contextual' and minimum is None else 'pass')})
     orders = spec.get('emphasisOrders', [])
@@ -163,6 +224,30 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
     if len({o['id'] for o in orders}) != len(orders):
         raise ValueError('duplicate emphasis order')
     indexed = {(r['pairId'], r['sampleId']): r for r in results}
+    declared_orders = {(o['strongerPairId'], o['weakerPairId'], o['sampleId']) for o in orders}
+    state_groups = {}
+    for frozen in expected_pairs:
+        if frozen.get('kind') == 'state':
+            state_groups.setdefault(frozen.get('stateGroupId'), []).append(frozen)
+    for group_id, members in state_groups.items():
+        if group_id is None or len(members) < 2:
+            raise ValueError('each stateGroupId must contain at least two state relationships')
+        for left_index, left in enumerate(members):
+            for right in members[left_index + 1:]:
+                shared = set(left['sampleIds']) & set(right['sampleIds'])
+                for sample_id in shared:
+                    left_result = indexed[(left['id'], sample_id)]
+                    right_result = indexed[(right['id'], sample_id)]
+                    if left_result['colors']['source']['background'] != right_result['colors']['source']['background']:
+                        continue
+                    difference = left_result['ratios']['source'] - right_result['ratios']['source']
+                    if abs(difference) <= 1e-9:
+                        continue
+                    stronger, weaker = ((left['id'], right['id']) if difference > 0
+                                        else (right['id'], left['id']))
+                    if (stronger, weaker, sample_id) not in declared_orders:
+                        raise ValueError('state strength relation missing from emphasisOrders: ' +
+                                         group_id + '/' + stronger + '>' + weaker + '/' + sample_id)
     order_results = []
     for order in orders:
         strong = indexed[(order['strongerPairId'], order['sampleId'])]

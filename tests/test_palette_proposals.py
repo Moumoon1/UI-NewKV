@@ -58,6 +58,26 @@ def metallic_proposals():
 
 
 class PaletteProposalTests(unittest.TestCase):
+    def test_eight_background_options_render_all_panels(self):
+        from copy import deepcopy
+        from PIL import Image
+        candidate = proposal()
+        candidate['schemes'] = []
+        for i in range(8):
+            scheme = deepcopy(proposal()['schemes'][0])
+            scheme['id'] = f'D-C-S{i + 1}'
+            scheme['colors']['background'] = f'#{16 + i:02X}0A24'
+            candidate['schemes'].append(scheme)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'options.png'
+            manifest = render_palette_proposals(candidate, output)
+            with Image.open(output) as img:
+                for i in range(8):
+                    self.assertEqual(img.getpixel((30 + (i % 2) * 424,
+                                                  90 + (i // 2) * 370))[:3],
+                                     (16 + i, 10, 36))
+        self.assertEqual(manifest['schemeIds'], [s['id'] for s in candidate['schemes']])
+
     def test_very_vivid_contrast_button_previews_white_text_first(self):
         candidate = proposal()
         candidate['schemes'][0]['hueStrategy'] = 'contrast'

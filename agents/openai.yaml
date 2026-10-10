@@ -1,6 +1,6 @@
 interface:
   display_name: "KV UI 换肤"
-  short_description: "先提供含 Icon 的六色方案，确认后完整替换 KV 并换肤验收"
-  default_prompt: "使用 $kv-ui-theme-adapter，先分析我提供的新 KV 完整视觉单元与原页面，并给出背景、卡片、数字、Icon、按钮、Tab 六色方案；等我选定方案后，再复制活动页副本、保持 KV 原尺度与内部渐变、保护独立营销 Banner，并完成试色、换肤和验收。"
+  short_description: "六色方案确认后以完整预演和真实审计换肤，支持同方案有界修复"
+  default_prompt: "使用 $kv-ui-theme-adapter，先分析新 KV 完整视觉单元与原页面并给出背景、卡片、数字、Icon、按钮、Tab 六色方案；我选定后，只采集一次完整原稿快照，在本地生成并审计全部换色计划，每个冻结事务一次批量写入并集中终审；范围内问题继续有界修复。"
 policy:
   allow_implicit_invocation: true

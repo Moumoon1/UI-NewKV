@@ -22,12 +22,27 @@ def snapshot():
 
 def manifest(source):
     inv = execution.color_inventory(source)
-    return {'schemaVersion': 1, 'sourceHash': inv['sourceHash'], 'entries': [
+    entries = [
         {**entry, 'role': 'icon.glyph', 'reason': 'Fixture preserved structure', 'ruleId': 'material-layers',
-         'disposition': 'preserve'} for entry in inv['entries']]}
+         'disposition': 'preserve'} for entry in inv['entries']]
+    return {'schemaVersion': 1, 'sourceHash': inv['sourceHash'],
+            'themeTransition': 'light-to-light', 'entries': entries,
+            'iconGlyphPlan': {'schemaVersion': 1, 'sourceHash': inv['sourceHash'], 'roots': [
+                {'rootNodeId': 'icon', 'channels': [
+                    {'path': entry['path'], 'part': 'glyph', 'action': 'preserve',
+                     'reason': 'Neutral synthetic fixture', 'themeNeutral': True,
+                     'neutralEvidence': 'Test fixture explicitly treats all channels as neutral.'}
+                    for entry in entries]}]}}
 
 
 class ColorBindingAuditChecks(unittest.TestCase):
+    def test_anchor_rgb_and_opaque_rgba_are_equivalent_not_transparent(self):
+        anchor = {'r': .7, 'g': .5, 'b': .2}
+        self.assertTrue(execution._anchor_matches({**anchor, 'a': 1}, anchor))
+        self.assertTrue(execution._anchor_matches(anchor, {**anchor, 'a': 1}))
+        self.assertFalse(execution._anchor_matches({**anchor, 'a': .5}, anchor))
+        self.assertFalse(execution._anchor_matches({**anchor, 'r': .8}, anchor))
+
     def test_catches_paint_gradient_effect_and_text_style_bindings(self):
         source = snapshot()
         icon = source['nodes'][1]['props']
@@ -52,6 +67,35 @@ class ColorBindingAuditChecks(unittest.TestCase):
         source['nodes'][1]['props']['boundVariables'] = {
             'itemSpacing': {'type': 'VARIABLE_ALIAS', 'id': 'V:space'}}
         self.assertEqual(execution.color_binding_audit(source)['status'], 'pass')
+
+
+class IconGlyphCoverageChecks(unittest.TestCase):
+    def rules(self):
+        return {'icon-clarity': {'applicable': True, 'scopeNodeIds': ['icon']}}
+
+    def test_missing_visible_glyph_path_fails(self):
+        source = snapshot(); plan = manifest(source)
+        plan['iconGlyphPlan']['roots'][0]['channels'].pop()
+        result = execution.icon_glyph_requirements(source, plan, self.rules())
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any(e['error'] == 'visible Icon channels missing' for e in result['errors']))
+
+    def test_preserved_glyph_requires_theme_neutral_evidence(self):
+        source = snapshot(); plan = manifest(source)
+        channel = plan['iconGlyphPlan']['roots'][0]['channels'][0]
+        channel.pop('neutralEvidence')
+        result = execution.icon_glyph_requirements(source, plan, self.rules())
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('theme-neutral' in e['error'] for e in result['errors']))
+
+    def test_changed_glyph_path_passes_without_neutral_exception(self):
+        source = snapshot(); plan = manifest(source)
+        channel = plan['iconGlyphPlan']['roots'][0]['channels'][0]
+        channel.update(action='change'); channel.pop('themeNeutral'); channel.pop('neutralEvidence')
+        entry = next(e for e in plan['entries'] if e['path'] == channel['path'])
+        entry.update(disposition='change', target={'r': .6, 'g': .7, 'b': .8},
+                     recipeId='icon-blue', sceneId='offline-preflight')
+        self.assertEqual(execution.icon_glyph_requirements(source, plan, self.rules())['status'], 'pass')
 
 
 class DisplayedContinuityChecks(unittest.TestCase):
@@ -130,6 +174,70 @@ class DisplayedContinuityChecks(unittest.TestCase):
             result = execution.verify_displayed_relations(source, source, rule, evidence)
             self.assertLess(result['groups'][0]['actual']['lightnessSpread'], 5)
             self.assertEqual(result['status'], 'fail')
+
+    def test_source_appearance_equivalence_allows_no_new_visual_split(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            def image_samples(name, colors):
+                image = Image.new('RGB', (2, 1)); image.putdata(colors); image.save(p / name)
+                ref = {'path': str(p / name),
+                       'sha256': hashlib.sha256((p / name).read_bytes()).hexdigest()}
+                return [{'image': ref, 'xy': point} for point in [[0, 0], [1, 0]]]
+            group = {'id': 'source-same',
+                     'relationType': 'source-appearance-equivalence',
+                     'basis': 'Two source regions are visually the same surface.',
+                     'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]],
+                     'nativePixels': [2, 1]}
+            rule = {'verifier': {'groups': [group]}}
+            evidence = {'sourceHash': audit.digest(source),
+                        'actualHash': audit.digest(source),
+                        'groups': [{'id': 'source-same',
+                                    'source': image_samples('source.png',
+                                                            [(128, 128, 128), (129, 128, 128)]),
+                                    'actual': image_samples('actual.png',
+                                                            [(240, 232, 210), (216, 188, 140)])}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertTrue(result['groups'][0]['sourceAppearanceEquivalent'])
+            self.assertEqual(result['status'], 'fail')
+            evidence['groups'][0]['actual'] = image_samples(
+                'actual.png', [(240, 232, 210), (241, 232, 210)])
+            self.assertEqual(execution.verify_displayed_relations(
+                source, source, rule, evidence)['status'], 'pass')
+
+    def test_surface_linked_appearance_requires_surface_recipe_and_anchor(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            def image_samples(name, colors):
+                image = Image.new('RGB', (2, 1)); image.putdata(colors); image.save(p / name)
+                ref = {'path': str(p / name),
+                       'sha256': hashlib.sha256((p / name).read_bytes()).hexdigest()}
+                return [{'image': ref, 'xy': point} for point in [[0, 0], [1, 0]]]
+            group = {'id': 'surface-proxy',
+                     'relationType': 'surface-linked-appearance',
+                     'basis': 'The second channel visually reveals the first surface.',
+                     'targetBasis': 'surface-recipe', 'anchorPointIndex': 0,
+                     'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]],
+                     'nativePixels': [2, 1]}
+            rule = {'verifier': {'groups': [group]}}
+            evidence = {'sourceHash': audit.digest(source),
+                        'actualHash': audit.digest(source),
+                        'groups': [{'id': 'surface-proxy',
+                                    'source': image_samples('source.png',
+                                                            [(48, 44, 42), (49, 44, 42)]),
+                                    'actual': image_samples('actual.png',
+                                                            [(248, 241, 224), (248, 241, 224)])}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertEqual(result['status'], 'pass')
+            self.assertEqual(result['groups'][0]['anchorPointIndex'], 0)
+            group['targetBasis'] = 'icon-recipe'
+            with self.assertRaisesRegex(ValueError, 'must use the surface recipe'):
+                execution.verify_displayed_relations(source, source, rule, evidence)
 
     def test_native_pixels_catch_different_composition_and_require_fresh_binding(self):
         import hashlib
@@ -300,6 +408,16 @@ class CoverageChecks(unittest.TestCase):
         source = snapshot(); plan['entries'][0]['reason'] = ''
         self.assertEqual(execution.coverage(source, plan)['status'], 'fail')
 
+    def test_placeholder_role_cannot_claim_classification(self):
+        source = snapshot()
+        for placeholder in ('unknown', 'Unclassified', 'pending', 'todo', 'TBD'):
+            plan = manifest(source)
+            plan['entries'][0]['role'] = placeholder
+            result = execution.coverage(source, plan)
+            self.assertEqual(result['status'], 'fail')
+            self.assertTrue(any('placeholder role' in row['error']
+                                for row in result['errors']))
+
     def test_unchanged_actual_passes_difference_guard_but_fails_completion(self):
         source = snapshot(); plan = manifest(source)
         path = plan['entries'][0]['path']
@@ -312,6 +430,116 @@ class CoverageChecks(unittest.TestCase):
         actual = copy.deepcopy(source); actual['nodes'][1]['props']['fills'][0]['color'] = target
         self.assertEqual(execution.complete(source, actual, plan, policy)['status'], 'pass')
 
+
+class TextRangeCoverageChecks(unittest.TestCase):
+    def fixture(self):
+        source = snapshot()
+        source['nodes'][0]['children'].append('label')
+        source['nodes'].append({'id': 'label', 'parentId': 'page', 'children': [], 'props': {
+            'type': 'TEXT', 'characters': 'ABCD', 'opacity': 1,
+            'textRuns': {'fills': [
+                {'start': 0, 'end': 2, 'value': [{'type': 'SOLID',
+                 'color': {'r': .9, 'g': .8, 'b': .7, 'a': .4}}]},
+                {'start': 2, 'end': 4, 'value': [{'type': 'SOLID',
+                 'color': {'r': .8, 'g': .4, 'b': .2, 'a': 1}}]}]}}})
+        plan = manifest(source)
+        for entry in plan['entries']:
+            if entry['nodeId'] == 'label':
+                entry['role'] = 'text.secondary'
+        relationships = [{'id': 'text-host', 'kind': 'text',
+                          'nodeIds': ['label', 'page'], 'sampleIds': ['range-0', 'range-1']}]
+        rules = {'readability': {'kind': 'visual', 'applicable': True,
+                                 'scopeNodeIds': ['label']}}
+        paths = [entry['path'] for entry in plan['entries'] if entry['nodeId'] == 'label']
+        plan['textRangePlan'] = {'schemaVersion': 1,
+            'sourceHash': audit.digest(audit.snapshot_document(source)), 'entries': [{
+                'nodeId': 'label', 'ranges': [
+                    {'start': 0, 'end': 2, 'channelPaths': [p for p in paths if '/fills/0/' in p],
+                     'action': 'preserve', 'role': 'text.secondary', 'reason': 'Fixture range',
+                     'hostNodeIds': ['page'], 'contrastPairIds': ['text-host']},
+                    {'start': 2, 'end': 4, 'channelPaths': [p for p in paths if '/fills/1/' in p],
+                     'action': 'preserve', 'role': 'text.link', 'reason': 'Fixture range',
+                     'hostNodeIds': ['page'], 'contrastPairIds': ['text-host']}]}]}
+        return source, plan, relationships, rules
+
+    def test_mixed_text_requires_every_styled_range(self):
+        source, plan, relationships, rules = self.fixture()
+        self.assertEqual(execution.text_range_requirements(
+            source, plan, relationships, rules)['status'], 'pass')
+        plan['textRangePlan']['entries'][0]['ranges'].pop()
+        result = execution.text_range_requirements(source, plan, relationships, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('boundary' in error['error'] for error in result['errors']))
+
+    def test_text_range_must_be_contrast_bound_and_in_readability_scope(self):
+        source, plan, relationships, rules = self.fixture()
+        plan['textRangePlan']['entries'][0]['ranges'][0]['contrastPairIds'] = []
+        self.assertEqual(execution.text_range_requirements(
+            source, plan, relationships, rules)['status'], 'fail')
+        source, plan, relationships, rules = self.fixture()
+        rules['readability']['scopeNodeIds'] = []
+        result = execution.text_range_requirements(source, plan, relationships, rules)
+        self.assertTrue(any('readability' in error['error'] for error in result['errors']))
+
+    def test_cross_mode_text_needs_a_numeric_legibility_floor(self):
+        source, plan, relationships, rules = self.fixture()
+        plan['themeTransition'] = 'dark-to-light'
+        result = execution.text_range_requirements(source, plan, relationships, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('minimumContrast' in error['error'] for error in result['errors']))
+        relationships[0]['minimumContrast'] = 3
+        self.assertEqual(execution.text_range_requirements(
+            source, plan, relationships, rules)['status'], 'pass')
+
+    def test_media_protection_cannot_expand_to_page_or_card_ancestor(self):
+        source, plan, relationships, rules = self.fixture()
+        protected = plan['textRangePlan']['entries'][0]['ranges'][0]
+        protected.update(action='protected', protectionClass='protected-media-overlay',
+                         coverNodeId='page')
+        protected.pop('hostNodeIds'); protected.pop('contrastPairIds')
+        result = execution.text_range_requirements(source, plan, relationships, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('cover subtree' in error['error'] for error in result['errors']))
+
+
+class CrossModeCompositeCoverageChecks(unittest.TestCase):
+    def fixture(self):
+        source = snapshot(); plan = manifest(source)
+        plan['themeTransition'] = 'dark-to-light'
+        rules = {'cross-mode-composite': {'scopeNodeIds': ['icon']},
+                 'surface-continuity': {'scopeNodeIds': ['icon']}}
+        candidates = []
+        doc = audit.snapshot_document(source)
+        for entry in plan['entries']:
+            if '/gradientStops/' in entry['path']:
+                candidates.append({'path': entry['path'],
+                    'sourceAlphaPaths': execution._alpha_paths(doc, entry['path']),
+                    'decision': 'recompute-appearance', 'hostNodeIds': ['page'],
+                    'reviewSceneId': 'icon-1x', 'targetCompositeEvidenceId': 'icon-native'})
+        plan['crossModeCompositePlan'] = {'schemaVersion': 1,
+            'sourceHash': audit.digest(doc), 'entries': candidates,
+            'boundaryGroups': [{'id': 'icon-gradient-end', 'kind': 'gradient-terminal',
+                'nodeIds': ['icon'], 'reviewSceneId': 'icon-1x', 'evidenceId': 'icon-edge'}]}
+        return source, plan, rules
+
+    def test_cross_mode_requires_complete_alpha_and_gradient_plan(self):
+        source, plan, rules = self.fixture()
+        self.assertEqual(execution.cross_mode_composite_requirements(
+            source, source, plan, rules)['status'], 'pass')
+        plan['crossModeCompositePlan']['entries'].pop()
+        result = execution.cross_mode_composite_requirements(source, source, plan, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('omitted' in error['error'] for error in result['errors']))
+
+    def test_appearance_alpha_cannot_be_labeled_structural(self):
+        source, plan, rules = self.fixture()
+        plan['crossModeCompositePlan']['entries'][0]['decision'] = 'preserve-structural'
+        result = execution.cross_mode_composite_requirements(source, source, plan, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertTrue(any('structural' in error['error'] for error in result['errors']))
+
+
+class CompletionAndFinalizerChecks(unittest.TestCase):
     def test_protected_and_unplanned_target_fail(self):
         source = snapshot(); plan = manifest(source)
         plan['entries'][0].update(disposition='change', target={'r': .8, 'g': .3, 'b': .4},
@@ -352,13 +580,28 @@ class CoverageChecks(unittest.TestCase):
     def test_finalizer_recomputes_checks_and_rejects_missing_visual_rules(self):
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp)
-            source = snapshot(); plan = manifest(source)
+            source = snapshot()
+            source['nodes'][0]['props'].update(x=0, y=0, width=400, height=800)
+            source['nodes'][1]['props'].update(x=0, y=0, width=400, height=100)
+            plan = manifest(source)
+            icon_fill = next(e['path'] for e in plan['entries']
+                             if e['nodeId'] == 'icon' and '/props/fills/' in e['path'])
+            plan['surfaceSystemPlan'] = {
+                'schemaVersion': 1, 'sourceHash': plan['sourceHash'],
+                'surfaces': [{'id': 'icon-surface', 'nodeId': 'icon',
+                              'kind': 'interaction', 'carrierPaths': [icon_fill],
+                              'basis': 'Synthetic large interaction carrier.'}],
+                'cardBaseGroups': [], 'boundaryReviews': []}
             ledger = {'schemaVersion': 1, 'rules': [
                 {'id': name, 'kind': 'machine', 'applicable': True, 'source': 'Fixture', 'acceptance': name}
                 for name in sorted(execution.MACHINE_RULES)] + [
                 {'id': name, 'kind': 'visual', 'applicable': True, 'scopeNodeIds': ['page', 'icon'],
                  'source': 'Fixture', 'acceptance': name} for name in sorted(execution.VISUAL_RULES)]}
             relationships = [{'id': 'icon-host', 'kind': 'icon', 'nodeIds': ['icon'], 'sampleIds': ['solid']}]
+            ledger['sourceInteractions'] = {
+                'schemaVersion': 1, 'sourceHash': audit.digest(audit.snapshot_document(source)),
+                'sourceReviewEvidence': 'Synthetic decorative vector; no interactive entries or text.',
+                'entries': [], 'nonInteractiveText': []}
             next(r for r in ledger['rules'] if r['id'] == 'contrast-baseline')['verifier'] = {
                 'type': 'contrast-baseline', 'relationships': relationships}
             color_relations = {'schemaVersion': 1, 'groups': []}
@@ -372,6 +615,8 @@ class CoverageChecks(unittest.TestCase):
                                    'reviewRuleIds': ['clarity', 'hierarchy']}]}
             next(r for r in ledger['rules'] if r['id'] == 'visual-unit-coverage')['verifier'] = {
                 'type': 'visual-unit-coverage', 'registryHash': audit.digest(registry)}
+            next(r for r in ledger['rules'] if r['id'] == 'surface-system')['verifier'] = {
+                'type': 'surface-system', 'planHash': audit.digest(plan['surfaceSystemPlan'])}
             solid = {'layers': [{'colorPath': '/nodes/icon/props/fills/0/color'}]}
             doc = audit.snapshot_document(source)
             samples = {'schemaVersion': 1, 'sourceHash': audit.digest(doc), 'actualHash': audit.digest(doc),
@@ -430,6 +675,17 @@ class CoverageChecks(unittest.TestCase):
             actual = copy.deepcopy(source); actual['capturedAt'] = '2026-01-01T00:00:02Z'
             audit.save_json(spec['cloneNow'], actual)
             self.assertEqual(execution.finalize(spec)['status'], 'pass')
+            # Even fresh visual gates cannot bypass the independent source-entry inventory.
+            absent_entries_ledger = dict(ledger)
+            absent_entries_ledger.pop('sourceInteractions')
+            absent_entries_plan = {**plan, 'ruleLedgerHash': audit.digest(absent_entries_ledger)}
+            audit.save_json(spec['ruleLedger'], absent_entries_ledger)
+            audit.save_json(spec['manifest'], absent_entries_plan)
+            missing_entries = execution.finalize(spec)
+            self.assertEqual(missing_entries['machineChecks']['interaction-entry-coverage']['status'], 'fail')
+            self.assertEqual(missing_entries['status'], 'fail')
+            audit.save_json(spec['ruleLedger'], ledger)
+            audit.save_json(spec['manifest'], plan)
             missing_contrast = dict(spec); missing_contrast.pop('contrastSamples')
             with self.assertRaises(ValueError): execution.finalize(missing_contrast)
             missing_relations = dict(spec); missing_relations.pop('colorRelations')

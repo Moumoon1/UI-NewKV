@@ -58,6 +58,35 @@ class MaterialRelationAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "allowFlattenReason"):
             audit_material_relations(self.source, self.source, {"a": "a", "b": "b"}, plan)
 
+    def test_repeated_metal_stop_roles_cannot_split_or_lose_alternation(self):
+        dark = {"r": .05, "g": .08, "b": .12, "a": 1}
+        light = {"r": .9, "g": .95, "b": 1, "a": 1}
+        source_rows = [(str(i), dark if i % 2 == 0 else light) for i in range(8)]
+        target_rows = [("t" + str(i), ({"r": .2, "g": .45, "b": .9, "a": 1}
+                                      if i >= 2 else
+                                      {"r": .8, "g": .9, "b": 1, "a": 1}))
+                       for i in range(8)]
+        source = snapshot(source_rows); target = snapshot(target_rows)
+        mapping = {str(i): "t" + str(i) for i in range(8)}
+        plan = {"schemaVersion": 1, "relations": [{"id": "metal-ring", "unitId": "icon",
+                "members": [{"sourceId": str(i), "path": "/fills/0/color", "role": "stop-" + str(i)}
+                            for i in range(8)]}]}
+        result = audit_material_relations(source, target, mapping, plan)
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(result["findings"][0]["roleGroupErrors"])
+
+    def test_repeated_metal_stop_roles_may_change_palette_but_keep_groups(self):
+        dark = {"r": .05, "g": .08, "b": .12, "a": 1}
+        light = {"r": .9, "g": .95, "b": 1, "a": 1}
+        blue_dark = {"r": .15, "g": .35, "b": .7, "a": 1}
+        blue_light = {"r": .75, "g": .86, "b": 1, "a": 1}
+        source = snapshot([(str(i), dark if i % 2 == 0 else light) for i in range(8)])
+        target = snapshot([("t" + str(i), blue_dark if i % 2 == 0 else blue_light) for i in range(8)])
+        plan = {"schemaVersion": 1, "relations": [{"id": "metal-ring", "members": [
+            {"sourceId": str(i), "path": "/fills/0/color"} for i in range(8)]}]}
+        self.assertEqual(audit_material_relations(source, target,
+                         {str(i): "t" + str(i) for i in range(8)}, plan)["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

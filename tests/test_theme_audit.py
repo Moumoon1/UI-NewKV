@@ -103,6 +103,13 @@ class StructuralChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.compare(snapshot(), snapshot(), policy(), mapping)
 
+    def test_deep_valid_tree_does_not_depend_on_python_recursion_limit(self):
+        nodes = [{'id': str(i), 'parentId': str(i - 1) if i else None,
+                  'children': [str(i + 1)] if i < 1499 else [],
+                  'props': {'type': 'FRAME'}} for i in range(1500)]
+        document = audit.snapshot_document({'schemaVersion': 1, 'rootId': '0', 'errors': [], 'nodes': nodes})
+        self.assertEqual(len(document['nodes']), 1500)
+
     def test_incomplete_snapshot_rejected(self):
         for mutation in (lambda s: s["errors"].append({"error": "denied"}),
                          lambda s: s["nodes"].pop(),
@@ -136,6 +143,146 @@ class ColorRelationChecks(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertTrue(result["groups"][0]["sourceEquivalent"])
         self.assertFalse(result["groups"][0]["targetEquivalent"])
+
+    def test_all_changeable_source_equal_rgb_paths_stay_equal_automatically(self):
+        manifest = {'entries': [
+            {'path': '/nodes/card/props/fills/0/color', 'disposition': 'change'},
+            {'path': '/nodes/protected/props/fills/0/color', 'disposition': 'change'},
+        ]}
+        self.after['nodes'][1]['props']['fills'][0]['color'] = {
+            'r': .95, 'g': .9, 'b': .8}
+        self.after['nodes'][2]['props']['fills'][0]['color'] = {
+            'r': .95, 'g': .9, 'b': .8}
+        self.after['nodes'][3]['props']['fills'][0]['color'] = {
+            'r': .8, 'g': .7, 'b': .6}
+        result = audit.color_relations(
+            self.before, self.after, self.spec, manifest=manifest)
+        self.assertEqual(result['status'], 'fail')
+        self.assertFalse(result['automaticSourceEquivalenceGroups'][0]
+                         ['targetEquivalent'])
+        self.after['nodes'][3]['props']['fills'][0]['color'] = copy.deepcopy(
+            self.after['nodes'][1]['props']['fills'][0]['color'])
+        self.assertEqual(audit.color_relations(
+            self.before, self.after, self.spec, manifest=manifest)['status'], 'pass')
+
+    def test_surface_linked_same_source_group_requires_surface_anchored_plan(self):
+        surface = '/nodes/card/props/fills/0/color'
+        glyph = '/nodes/protected/props/fills/0/color'
+        manifest = {'entries': [
+            {'path': surface, 'disposition': 'change', 'role': 'surface.card'},
+            {'path': glyph, 'disposition': 'change', 'role': 'icon.secondary'},
+        ]}
+        target = {'r': .96, 'g': .92, 'b': .84}
+        self.after['nodes'][1]['props']['fills'][0]['color'] = copy.deepcopy(target)
+        self.after['nodes'][3]['props']['fills'][0]['color'] = copy.deepcopy(target)
+        relation_spec = {'schemaVersion': 1, 'groups': []}
+        missing = audit.color_relations(
+            self.before, self.after, relation_spec, manifest=manifest)
+        self.assertEqual(missing['status'], 'fail')
+        automatic = missing['automaticSourceEquivalenceGroups'][0]
+        self.assertTrue(automatic['surfaceLinked'])
+        self.assertEqual(automatic['groupPlanStatus'], 'missing')
+
+        planned = copy.deepcopy(relation_spec)
+        planned['automaticGroupPlans'] = [{
+            'id': automatic['id'],
+            'relationType': 'surface-linked-equivalence',
+            'targetBasis': 'surface-recipe',
+            'anchorPath': surface,
+            'paths': sorted([surface, glyph]),
+            'reason': 'The non-surface channel reveals the same source surface.',
+        }]
+        passed = audit.color_relations(
+            self.before, self.after, planned, manifest=manifest)
+        self.assertEqual(passed['status'], 'pass')
+        self.assertEqual(passed['automaticSourceEquivalenceGroups'][0]
+                         ['anchorPath'], surface)
+
+    def test_surface_linked_plan_rejects_non_surface_anchor(self):
+        surface = '/nodes/card/props/fills/0/color'
+        glyph = '/nodes/protected/props/fills/0/color'
+        manifest = {'entries': [
+            {'path': surface, 'disposition': 'change', 'role': 'surface.container'},
+            {'path': glyph, 'disposition': 'change', 'role': 'stroke.boundary'},
+        ]}
+        group_id = 'automatic-source-rgb8-255-255-255'
+        spec = copy.deepcopy(self.spec)
+        spec['automaticGroupPlans'] = [{
+            'id': group_id,
+            'relationType': 'surface-linked-equivalence',
+            'targetBasis': 'surface-recipe',
+            'anchorPath': glyph,
+            'paths': sorted([surface, glyph]),
+            'reason': 'Invalid fixture anchor.',
+        }]
+        with self.assertRaisesRegex(ValueError, 'anchorPath must be a surface member'):
+            audit.color_relations(self.before, self.after, spec, manifest=manifest)
+
+    def partition_fixture(self):
+        paths = ['/nodes/card/props/fills/0/color', '/nodes/button/props/fills/0/color',
+                 '/nodes/protected/props/fills/0/color']
+        roles = ['text.number', 'button.primary', 'button.primary']
+        manifest = {'entries': [{'path': p, 'role': r, 'disposition': 'change'}
+                                for p, r in zip(paths, roles)]}
+        plan = {'id': 'automatic-source-rgb8-255-255-255', 'relationType': 'semantic-partition',
+                'sourceHash': audit.digest(audit.snapshot_document(self.before)),
+                'paths': paths, 'reason': 'Separate source number and operation duties.',
+                'partitions': [{'role': 'text.number', 'paths': paths[:1], 'sourceEvidence': 'Source number.'},
+                               {'role': 'button.primary', 'paths': paths[1:], 'sourceEvidence': 'Source button family.'}]}
+        self.after['nodes'][1]['props']['fills'][0]['color'] = {'r': .5, 'g': .3, 'b': .1}
+        for i in (2, 3):
+            self.after['nodes'][i]['props']['fills'][0]['color'] = {'r': .7, 'g': .5, 'b': .2}
+        return manifest, {'schemaVersion': 1, 'groups': [], 'automaticGroupPlans': [plan]}, plan
+
+    def test_source_semantic_partition_needs_no_user_confirmation(self):
+        manifest, spec, _ = self.partition_fixture()
+        result = audit.color_relations(self.before, self.after, spec, manifest=manifest)
+        self.assertEqual(result['status'], 'pass')
+        self.assertFalse(result['automaticSourceEquivalenceGroups'][0]['targetEquivalent'])
+
+    def test_partition_cannot_override_explicit_continuity(self):
+        manifest, spec, _ = self.partition_fixture()
+        spec['groups'] = self.spec['groups']
+        self.assertEqual(audit.color_relations(self.before, self.after, spec, manifest=manifest)['status'], 'fail')
+
+    def test_partition_keeps_same_role_targets_equal(self):
+        manifest, spec, _ = self.partition_fixture()
+        self.after['nodes'][3]['props']['fills'][0]['color']['r'] = .9
+        self.assertEqual(audit.color_relations(self.before, self.after, spec, manifest=manifest)['status'], 'fail')
+
+    def test_partition_rejects_stale_omitted_duplicate_or_unproven_members(self):
+        for defect in ('stale', 'omitted', 'duplicate', 'evidence', 'role'):
+            with self.subTest(defect=defect):
+                manifest, spec, plan = self.partition_fixture()
+                if defect == 'stale': plan['sourceHash'] = 'stale'
+                if defect == 'omitted': plan['partitions'][1]['paths'].pop()
+                if defect == 'duplicate': plan['partitions'][1]['paths'].append(plan['paths'][0])
+                if defect == 'evidence': plan['partitions'][0]['sourceEvidence'] = ''
+                if defect == 'role': plan['partitions'][0]['role'] = 'button.primary'
+                with self.assertRaises(ValueError):
+                    audit.color_relations(self.before, self.after, spec, manifest=manifest)
+
+    def test_partition_cannot_split_surface_members(self):
+        manifest, spec, plan = self.partition_fixture()
+        manifest['entries'][0]['role'] = plan['partitions'][0]['role'] = 'surface.page'
+        for entry in manifest['entries'][1:]: entry['role'] = 'surface.card'
+        plan['partitions'][1]['role'] = 'surface.card'
+        with self.assertRaisesRegex(ValueError, 'cannot split source surface'):
+            audit.color_relations(self.before, self.after, spec, manifest=manifest)
+
+    def test_preserved_or_protected_paths_are_not_forced_into_theme_equivalence(self):
+        manifest = {'entries': [
+            {'path': '/nodes/card/props/fills/0/color', 'disposition': 'change'},
+            {'path': '/nodes/protected/props/fills/0/color', 'disposition': 'protected'},
+        ]}
+        self.after['nodes'][1]['props']['fills'][0]['color'] = {
+            'r': .95, 'g': .9, 'b': .8}
+        self.after['nodes'][2]['props']['fills'][0]['color'] = {
+            'r': .95, 'g': .9, 'b': .8}
+        result = audit.color_relations(
+            self.before, self.after, self.spec, manifest=manifest)
+        self.assertEqual(result['status'], 'pass')
+        self.assertEqual(result['automaticSourceEquivalenceGroups'], [])
 
     def test_equivalent_colors_allow_state_alpha_and_float_rounding(self):
         self.after["nodes"][1]["props"]["fills"][0]["color"] = {"r": .7, "g": .3, "b": .2}
