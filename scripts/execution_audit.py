@@ -4,6 +4,7 @@ import argparse
 import colorsys
 from collections import Counter
 import math
+import re
 import sys
 
 from theme_audit import (MISSING, at, canonical, compare, digest, equal, escape,
@@ -327,25 +328,49 @@ def icon_glyph_requirements(source, manifest, rules):
             'rootCount': len(seen_roots), 'channelCount': total, 'errors': errors}
 
 
-def text_range_requirements(source, manifest, relationships, rules):
+def text_range_requirements(source, manifest, relationships, rules, projected=None):
     """Require every visible styled text fill range to be classified and contrast-bound."""
     doc = snapshot_document(source)
     visible = _visible_nodes(doc, source['rootId'])
+    plan = manifest.get('textRangePlan')
+    hidden_roots = set(plan.get('hiddenRootIds', [])) if isinstance(plan, dict) else set()
+    if not hidden_roots <= doc['nodes'].keys():
+        return {'status': 'fail', 'applicable': True, 'textNodeCount': 0,
+                'rangeCount': 0, 'errors': [{'error': 'unknown planned hidden root'}]}
+    if projected is not None:
+        target_doc = snapshot_document(projected)
+        if any(root not in target_doc['nodes'] or
+               target_doc['nodes'][root]['props'].get('opacity') != 0 for root in hidden_roots):
+            return {'status': 'fail', 'applicable': True, 'textNodeCount': 0,
+                    'rangeCount': 0, 'errors': [{'error': 'planned hidden root is not hidden in projection'}]}
+    def planned_hidden(node_id):
+        cursor = node_id
+        while cursor in doc['nodes']:
+            if cursor in hidden_roots:
+                return True
+            cursor = doc['nodes'][cursor]['parentId']
+        return False
+    active_text_nodes = {
+        item['nodeId'] for item in color_inventory(source)['entries']
+        if not item['inactive'] and '/textRuns/fills/' in item['path']
+    }
     text_nodes = {node_id: row for node_id, row in doc['nodes'].items()
-                  if visible.get(node_id) and row['props'].get('type') == 'TEXT'
-                  and isinstance(row['props'].get('characters'), str)
-                  and row['props']['characters']}
+                  if visible.get(node_id) and not planned_hidden(node_id) and
+                  node_id in active_text_nodes and
+                  row['props'].get('type') == 'TEXT' and
+                  isinstance(row['props'].get('characters'), str) and
+                  row['props']['characters']}
     if not text_nodes:
         return {'status': 'pass', 'applicable': False, 'textNodeCount': 0,
                 'rangeCount': 0, 'errors': []}
-    plan = manifest.get('textRangePlan')
     if (not isinstance(plan, dict) or plan.get('schemaVersion') != 1 or
             plan.get('sourceHash') != digest(doc) or not isinstance(plan.get('entries'), list)):
         return {'status': 'fail', 'applicable': True, 'textNodeCount': len(text_nodes),
                 'rangeCount': 0, 'errors': [{'error': 'fresh textRangePlan bound to source snapshot required'}]}
     relation_index = {pair['id']: pair for pair in relationships}
     manifest_index = {entry['path']: entry for entry in manifest.get('entries', [])}
-    inventory_paths = {entry['path'] for entry in color_inventory(source)['entries']}
+    inventory = {entry['path']: entry for entry in color_inventory(source)['entries']}
+    inventory_paths = set(inventory)
     entries = plan['entries']; indexed = {}; errors = []; range_count = 0
     for entry in entries:
         node_id = entry.get('nodeId')
@@ -392,7 +417,8 @@ def text_range_requirements(source, manifest, relationships, rules):
                     not isinstance(text_range.get('reason'), str) or not text_range['reason'].strip():
                 errors.append({'nodeId': node_id, 'rangeIndex': index,
                                'error': 'text range role and reason required'})
-            dispositions = {manifest_index.get(path, {}).get('disposition') for path in channels}
+            dispositions = {manifest_index.get(path, {}).get('disposition') for path in channels
+                            if not inventory[path]['inactive']}
             expected_disposition = 'change' if action == 'change' else 'preserve'
             if dispositions != {expected_disposition}:
                 errors.append({'nodeId': node_id, 'rangeIndex': index,
@@ -770,7 +796,7 @@ def interaction_requirements(source, manifest, rules):
     return {'status': 'fail' if errors else 'pass', 'applicable': True, 'errors': errors}
 
 
-def scheme_anchor_requirements(manifest):
+def scheme_anchor_requirements(manifest, source=None):
     """Fail closed when a selected six-color proposal drifts during execution.
 
     Each public anchor needs at least one stable visible carrier in the manifest.
@@ -792,12 +818,46 @@ def scheme_anchor_requirements(manifest):
                         and 0 <= value[k] <= 1 for k in ('r', 'g', 'b')))
 
     entries = manifest.get('entries', [])
+    source_doc = snapshot_document(source) if source is not None else None
+    applicability = manifest.get('schemeAnchorApplicability', {})
+    if not isinstance(applicability, dict) or set(applicability) - {'tab'}:
+        errors.append({'error': 'only tab may have an anchor applicability exception'})
+        applicability = {}
+    tab_exception = applicability.get('tab')
+    if tab_exception is not None:
+        if any(entry.get('anchorId') == 'tab' for entry in entries):
+            errors.append({'anchorId': 'tab', 'error': 'no-Tab exception conflicts with tab anchor carrier'})
+        if source is None:
+            errors.append({'anchorId': 'tab', 'error': 'no-Tab exception requires source snapshot'})
+        else:
+            try:
+                doc = snapshot_document(source)
+                visible = _visible_nodes(doc, source['rootId'])
+                visible_ids = sorted(node_id for node_id, is_visible in visible.items() if is_visible)
+                named_tabs = sorted(node_id for node_id in visible_ids if
+                                    re.search(r'(?i)(?:^|[^a-z])tabs?(?:$|[^a-z])|选中.?tab|标签页',
+                                              str(doc['nodes'][node_id]['props'].get('name', ''))))
+                expected = {'status': 'not-applicable', 'sourceRootId': source['rootId'],
+                            'sourceHash': digest(source),
+                            'reviewedVisibleNodeIdsHash': digest(visible_ids),
+                            'finding': 'no-visible-tab',
+                            'userAuthorization': '允许无 Tab 豁免'}
+                if (not isinstance(tab_exception, dict) or
+                        any(tab_exception.get(key) != value for key, value in expected.items()) or
+                        not isinstance(tab_exception.get('reason'), str) or
+                        not tab_exception['reason'].strip() or named_tabs):
+                    errors.append({'anchorId': 'tab', 'error': 'no-Tab exception lacks bound exhaustive source evidence',
+                                   'namedTabCandidates': named_tabs})
+            except (ValueError, KeyError, TypeError) as exc:
+                errors.append({'anchorId': 'tab', 'error': 'invalid no-Tab source evidence', 'detail': str(exc)})
     for name in names:
         anchor = contract[name]
         if not valid_rgb(anchor):
             errors.append({'anchorId': name, 'error': 'anchor must be finite RGB(A)'})
             continue
         carriers = [e for e in entries if e.get('anchorId') == name]
+        if not carriers and name == 'tab' and tab_exception is not None:
+            continue
         if not carriers:
             errors.append({'anchorId': name, 'error': 'stable visible anchor channel missing'})
             continue
@@ -808,6 +868,28 @@ def scheme_anchor_requirements(manifest):
             if entry.get('disposition') != 'change' or not _anchor_matches(entry.get('target'), anchor):
                 errors.append({'anchorId': name, 'path': entry.get('path'),
                                'error': 'anchor target differs from selected schemeAnchorContract'})
+            if name == 'icon' and source_doc is not None:
+                match = re.fullmatch(r'/nodes/([^/]+)/props/fills/(\d+)/(?:color|gradientStops/\d+/color)',
+                                     str(entry.get('path', '')))
+                if match:
+                    node = source_doc['nodes'].get(match.group(1))
+                    fills = node['props'].get('fills', []) if node else []
+                    index = int(match.group(2))
+                    def opaque_cover(paint):
+                        if (not isinstance(paint, dict) or paint.get('visible') is False or
+                                paint.get('opacity', 1) != 1 or
+                                paint.get('blendMode', 'NORMAL') != 'NORMAL'):
+                            return False
+                        if paint.get('type') == 'SOLID':
+                            return paint.get('color', {}).get('a', 1) == 1
+                        if str(paint.get('type', '')).startswith('GRADIENT_'):
+                            stops = paint.get('gradientStops', [])
+                            return bool(stops) and all(
+                                stop.get('color', {}).get('a', 1) == 1 for stop in stops)
+                        return False
+                    if index < len(fills) and any(opaque_cover(paint) for paint in fills[index + 1:]):
+                        errors.append({'anchorId': name, 'path': entry.get('path'),
+                                       'error': 'icon anchor is covered by a higher fully opaque visible Fill'})
     unknown = sorted({e.get('anchorId') for e in entries if e.get('anchorId') is not None} - set(names))
     if unknown:
         errors.append({'anchorIds': unknown, 'error': 'unknown scheme anchor IDs'})
@@ -829,11 +911,14 @@ def verify_displayed_relations(source, actual, rule, evidence):
     for group in groups:
         points, limit = group.get('xy'), group.get('maximumChannelDelta')
         kind = group.get('relationType', 'continuity')
-        if kind not in {'continuity', 'appearance-family', 'source-appearance-equivalence',
-                        'surface-linked-appearance'} or not isinstance(points, list) or len(points) < 2:
+        if kind not in {'continuity', 'source-topology', 'appearance-family',
+                        'source-appearance-equivalence', 'surface-linked-appearance'} or not isinstance(points, list) or len(points) < 2:
             raise ValueError('known displayed relation and frozen comparison points required')
         if kind == 'continuity' and (type(limit) not in (int, float) or not 0 <= limit <= 255):
             raise ValueError('continuity needs an explicit scene tolerance')
+        if kind == 'source-topology' and (
+                type(limit) not in (int, float) or not 0 <= limit <= 16):
+            raise ValueError('source topology needs a tolerance no greater than 16/255')
         if kind in {'appearance-family', 'source-appearance-equivalence', 'surface-linked-appearance'}:
             if not isinstance(group.get('basis'), str) or not group['basis'].strip():
                 raise ValueError('appearance relation needs predeclared source evidence')
@@ -886,6 +971,13 @@ def verify_displayed_relations(source, actual, rule, evidence):
             if kind == 'surface-linked-appearance':
                 measured['anchorPointIndex'] = group['anchorPointIndex']
                 measured['targetBasis'] = group['targetBasis']
+        elif kind == 'source-topology':
+            source_continuous = measured['source']['maximumChannelDelta'] <= limit + 1e-9
+            target_limit = min(limit, measured['source']['maximumChannelDelta'] + 4)
+            passed = not source_continuous or measured['actual']['maximumChannelDelta'] <= target_limit + 1e-9
+            measured['sourceContinuous'] = source_continuous
+            measured['targetContinuous'] = measured['actual']['maximumChannelDelta'] <= limit + 1e-9
+            measured['targetLimit'] = target_limit
         else:
             passed = all(v['maximumChannelDelta'] <= limit + 1e-9 for v in measured.values())
         results.append({'id': group['id'], 'status': 'pass' if passed else 'fail', **measured})
@@ -994,7 +1086,13 @@ def finalize(spec):
     ledger_hash = digest(ledger)
     if plan.get('ruleLedgerHash') != ledger_hash:
         raise ValueError('manifest must bind the frozen rule ledger')
-    if any(entry['ruleId'] not in rules for entry in plan['entries']):
+    # The compiler records semantic classification IDs on color channels.
+    # Those IDs are checked by coverage and the frozen recipe; only gate IDs
+    # need matching machine/visual declarations in the rule ledger.
+    if any(entry['ruleId'] not in rules and
+           entry['ruleId'] not in ('inactive-source-channel', 'protected-hero-controls') and
+           not entry['ruleId'].startswith('semantic-theme:')
+           for entry in plan['entries']):
         raise ValueError('manifest references an undeclared rule')
     done = complete(source, actual, plan, policy, mapping)
     source_guard = compare(source, source_now, {'schemaVersion': 1, 'allowedChanges': [], 'protectedPaths': []})
@@ -1007,10 +1105,11 @@ def finalize(spec):
     relations = read_json(spec['colorRelations'])
     if relation_rule.get('groupsHash') != digest(relations):
         raise ValueError('color relations differ from frozen groups')
-    if not relations.get('groups') and not relation_rule.get('emptyEvidence'):
+    automatic_relations = relations.get('automaticGroupPlans', [])
+    if not relations.get('groups') and not relation_rule.get('emptyEvidence') and not automatic_relations:
         raise ValueError('empty color relations require predeclared source evidence')
     machine['color-relations'] = color_relations(source, actual, relations, mapping, plan)
-    if not relations.get('groups'):
+    if not relations.get('groups') and relation_rule.get('emptyEvidence'):
         machine['color-relations']['notApplicableEvidence'] = relation_rule['emptyEvidence']
     source_doc, actual_doc = mapped_document(source, actual, mapping)
     surface_rule = rules['surface-system'].get('verifier', {})
@@ -1019,7 +1118,7 @@ def finalize(spec):
         raise ValueError('surface-system rule must bind the frozen surfaceSystemPlan')
     from surface_system_audit import inspect as inspect_surface_system
     machine['surface-system'] = inspect_surface_system(source, actual, plan, rules, mapping)
-    machine['scheme-anchor-conformance'] = scheme_anchor_requirements(plan)
+    machine['scheme-anchor-conformance'] = scheme_anchor_requirements(plan, source)
     machine['interaction-requirements'] = interaction_requirements(source, plan, rules)
     from interaction_entry_audit import inspect as inspect_entries
     machine['interaction-entry-coverage'] = inspect_entries(source, plan, ledger)
@@ -1039,8 +1138,11 @@ def finalize(spec):
         source_doc, actual_doc, read_json(spec['contrastSamples']), contrast_rule.get('relationships'),
         contrast_rule.get('emphasisOrders', []), contrast_rule.get('policy', 'source-baseline'),
         contrast_rule.get('decisionContext'))
+    mapped_actual_snapshot = {**actual, 'rootId': source['rootId'],
+                              'nodes': [{'id': node_id, **row}
+                                        for node_id, row in actual_doc['nodes'].items()]}
     machine['text-range-coverage'] = text_range_requirements(
-        source, plan, contrast_rule.get('relationships', []), rules)
+        source, plan, contrast_rule.get('relationships', []), rules, mapped_actual_snapshot)
     machine['cross-mode-composite-coverage'] = cross_mode_composite_requirements(
         source, actual, plan, rules, mapping)
     if any(r.get('kind') == 'machine' and r.get('applicable') and

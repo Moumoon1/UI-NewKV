@@ -23,7 +23,7 @@ def rows(snapshot):
     return {row['id']: row for row in snapshot['nodes']}
 
 
-def structural_map(source, actual, actual_root, *, excluded_root=None):
+def structural_map(source, actual, actual_root, *, excluded_roots=()):
     source_rows, actual_rows = rows(source), rows(actual)
     mapping, mapped_ids, pending = {}, set(), [(source['rootId'], actual_root)]
     while pending:
@@ -34,7 +34,7 @@ def structural_map(source, actual, actual_root, *, excluded_root=None):
         mapping[old_id] = new_id
         mapped_ids.add(new_id)
         old_children = old['children']
-        new_children = [child for child in new['children'] if child != excluded_root]
+        new_children = [child for child in new['children'] if child not in excluded_roots]
         if len(old_children) != len(new_children):
             raise ValueError(f'child count changed at {old_id}')
         pending.extend(zip(old_children, new_children))
@@ -58,6 +58,8 @@ def _same_rendered_paints(expected, actual):
 
 
 def audit(source, expected, final, kv_source, manifest, write_plan, preview_png, final_png):
+    if write_plan.get('ctaButtonOverlay') is not None:
+        raise ValueError('raster CTA button overlay is forbidden')
     errors = []
     src, exp, dst, kv_src = rows(source), rows(expected), rows(final), rows(kv_source)
     final_root = dst[final['rootId']]
@@ -70,14 +72,45 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
     if len(candidates) != 1:
         raise ValueError('unique inserted KV root not found')
     kv_root = candidates[0]
-    mapping = structural_map(source, final, final['rootId'], excluded_root=kv_root)
+    extras = {}
+    for key, name in (('kvTransitionOverlay', '__kv_theme_transition__'),):
+        spec = write_plan.get(key)
+        matches = [row['id'] for row in final['nodes'] if row['props'].get('name') == name]
+        if spec:
+            if len(matches) != 1:
+                raise ValueError('unique ' + name + ' node not found')
+            extras[key] = matches[0]
+        elif matches:
+            errors.append('unplanned independent overlay: ' + name)
+    excluded = {kv_root, *extras.values()}
+    mapping = structural_map(source, final, final['rootId'], excluded_roots=excluded)
     kv_mapping = structural_map(kv_source, final, kv_root)
-    if len(dst) != len(src) + len(kv_src):
-        errors.append('final node count is not source + locked KV')
+    if len(dst) != len(src) + len(kv_src) + len(extras):
+        errors.append('final node count is not source + locked KV + declared overlays')
     if set(mapping.values()) & set(kv_mapping.values()):
         errors.append('UI and KV subtree overlap')
-    if set(mapping.values()) | set(kv_mapping.values()) != set(dst):
+    if set(mapping.values()) | set(kv_mapping.values()) | set(extras.values()) != set(dst):
         errors.append('unexpected or missing final nodes')
+    for key, overlay_id in extras.items():
+        spec, row = write_plan[key], dst[overlay_id]
+        expected_parent = final['rootId']
+        if row['parentId'] != expected_parent or row['props'].get('type') != 'RECTANGLE':
+            errors.append(key + ' has wrong parent or type')
+            continue
+        siblings = dst[expected_parent]['children']
+        if siblings.index(overlay_id) != spec['insertIndex']:
+            errors.append(key + ' child index differs from frozen plan')
+        for field in ('x', 'y', 'width', 'height'):
+            if not target_equal(row['props'].get(field), spec[field]):
+                errors.append(key + ' geometry mismatch: ' + field)
+        if row['props'].get('locked') is not True:
+            errors.append(key + ' is not locked')
+        paints = row['props'].get('fills') or []
+        if (not paints or paints[0].get('type') != 'GRADIENT_LINEAR' or
+                len(paints[0].get('gradientStops') or []) != 2 or
+                not target_equal(paints[0]['gradientStops'][0]['color'].get('a'), 0) or
+                not target_equal(paints[0]['gradientStops'][1]['color'].get('a'), 1)):
+            errors.append('KV transition gradient differs from frozen plan')
     placement = write_plan.get('kvPlacement')
     if (not isinstance(placement, dict) or
             type(placement.get('childIndex')) is not int or
@@ -186,11 +219,13 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
             text_spans_checked += 1
 
     # The imported KV retains its own bindings. Audit only mapped UI nodes.
-    ui_snapshot = {**final, 'nodes': [{**dst[new_id], 'id': new_id}
-                                     for new_id in mapping.values()]}
+    mapped_ids = set(mapping.values())
+    ui_snapshot = {**final, 'nodes': [{**dst[new_id], 'id': new_id,
+                                     'children': [child for child in dst[new_id]['children']
+                                                  if child in mapped_ids]}
+                                    for new_id in mapping.values()]}
     ui_snapshot['rootId'] = final['rootId']
     ui_root = next(row for row in ui_snapshot['nodes'] if row['id'] == final['rootId'])
-    ui_root['children'] = [c for c in ui_root['children'] if c != kv_root]
     bindings = color_binding_audit(ui_snapshot)
     if bindings['status'] != 'pass':
         errors.append(f'UI color bindings remain: {bindings["residualCount"]}')

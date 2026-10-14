@@ -78,7 +78,9 @@ def _match(selector, item, nodes, ancestry):
 
 
 def _scope_risk(rule, paths, matched, nodes, ancestry):
-    if not paths or rule.get('disposition') != 'preserve' or not str(rule.get('role', '')).startswith('protected'):
+    if (not paths or rule.get('disposition') != 'preserve' or
+            not str(rule.get('role', '')).startswith('protected') or
+            rule.get('selector', {}).get('path') is not None):
         return []
     risks = []
     for path in paths:

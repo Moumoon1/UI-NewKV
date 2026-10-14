@@ -94,10 +94,12 @@ def displayed_color(doc, spec, images):
             images[key] = image
         image = images[key]; xy = spec['xy']
         if (not isinstance(xy, list) or len(xy) != 2 or
-                any(type(v) is not int for v in xy) or
-                not 0 <= xy[0] < image.width or not 0 <= xy[1] < image.height):
+                any(type(v) not in (int, float) or not math.isfinite(v) for v in xy)):
             raise ValueError('sample outside native screenshot')
-        return [c / 255 for c in image.getpixel(tuple(xy))[:3]]
+        pixel_xy = tuple(math.floor(v + 0.5) for v in xy)
+        if not 0 <= pixel_xy[0] < image.width or not 0 <= pixel_xy[1] < image.height:
+            raise ValueError('sample outside native screenshot')
+        return [c / 255 for c in image.getpixel(pixel_xy)[:3]]
     raise ValueError('use actual solid-layer paths or verified screenshot coordinates')
 
 

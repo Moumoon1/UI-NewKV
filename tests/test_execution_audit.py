@@ -99,6 +99,79 @@ class IconGlyphCoverageChecks(unittest.TestCase):
 
 
 class DisplayedContinuityChecks(unittest.TestCase):
+    def test_different_source_fills_can_be_continuous_after_alpha_compositing(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        host = (40, 40, 80)
+        translucent_fill = (200, 100, 120)
+        opaque_fill = (120, 70, 100)
+        self.assertNotEqual(translucent_fill, opaque_fill)
+
+        def composite(fill, alpha):
+            return tuple(round(fg * alpha + bg * (1 - alpha))
+                         for fg, bg in zip(fill, host))
+
+        self.assertEqual(composite(translucent_fill, .5), opaque_fill)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            before = Image.new('RGB', (2, 1))
+            before.putdata([composite(translucent_fill, .5), opaque_fill])
+            after = Image.new('RGB', (2, 1))
+            after.putdata([composite((230, 170, 180), .5), opaque_fill])
+            before.save(folder / 'source.png')
+            after.save(folder / 'actual.png')
+
+            def refs(name):
+                path = folder / name
+                image = {'path': str(path),
+                         'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                return [{'image': image, 'xy': xy} for xy in [[0, 0], [1, 0]]]
+
+            rule = {'verifier': {'groups': [{
+                'id': 'painted-boundary', 'relationType': 'source-topology',
+                'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]],
+                'nativePixels': [2, 1], 'maximumChannelDelta': 16}]}}
+            evidence = {'sourceHash': audit.digest(source),
+                        'actualHash': audit.digest(source), 'groups': [{
+                            'id': 'painted-boundary', 'source': refs('source.png'),
+                            'actual': refs('actual.png')}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertEqual(result['status'], 'fail')
+            self.assertEqual(result['groups'][0]['source']['maximumChannelDelta'], 0)
+            self.assertGreater(result['groups'][0]['actual']['maximumChannelDelta'], 4)
+
+    def test_source_continuous_surface_rejects_new_visible_seam(self):
+        import hashlib
+        from PIL import Image
+        source = audit.snapshot_document(snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory)
+            before = Image.new('RGB', (2, 1)); before.putdata([(46, 49, 97), (46, 48, 97)])
+            after = Image.new('RGB', (2, 1)); after.putdata([(118, 89, 143), (82, 65, 103)])
+            before.save(p / 'source.png'); after.save(p / 'actual.png')
+            def refs(name):
+                path = p / name
+                ref = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                return [{'image': ref, 'xy': xy} for xy in [[0, 0], [1, 0]]]
+            rule = {'verifier': {'groups': [{'id': 'tab-body', 'relationType': 'source-topology',
+                    'nodeIds': ['icon'], 'xy': [[0, 0], [1, 0]], 'nativePixels': [2, 1],
+                    'maximumChannelDelta': 16}]}}
+            evidence = {'sourceHash': audit.digest(source), 'actualHash': audit.digest(source),
+                        'groups': [{'id': 'tab-body', 'source': refs('source.png'),
+                                    'actual': refs('actual.png')}]}
+            result = execution.verify_displayed_relations(source, source, rule, evidence)
+            self.assertEqual(result['status'], 'fail')
+            self.assertTrue(result['groups'][0]['sourceContinuous'])
+            after.putdata([(82, 65, 103), (82, 65, 115)]); after.save(p / 'actual.png')
+            evidence['groups'][0]['actual'] = refs('actual.png')
+            self.assertEqual(execution.verify_displayed_relations(
+                source, source, rule, evidence)['status'], 'fail')
+            after.putdata([(82, 65, 103), (82, 65, 103)]); after.save(p / 'actual.png')
+            evidence['groups'][0]['actual'] = refs('actual.png')
+            self.assertEqual(execution.verify_displayed_relations(
+                source, source, rule, evidence)['status'], 'pass')
+
     def test_multiple_rules_share_evidence_without_skipping_failed_or_missing_group(self):
         import hashlib
         from PIL import Image
@@ -370,6 +443,50 @@ class SchemeAnchorRequirementsChecks(unittest.TestCase):
         plan = self.fixture()
         plan['entries'] = [e for e in plan['entries'] if e['anchorId'] != 'tab']
         self.assertEqual(execution.scheme_anchor_requirements(plan)['status'], 'fail')
+
+    def test_icon_anchor_cannot_hide_under_opaque_upper_fill(self):
+        source = snapshot()
+        icon = source['nodes'][1]['props']
+        icon['fills'] = [
+            {'type': 'SOLID', 'color': {'r': .2, 'g': .3, 'b': .4}},
+            {'type': 'GRADIENT_LINEAR', 'gradientStops': [
+                {'position': 0, 'color': {'r': .8, 'g': .6, 'b': .2, 'a': 1}},
+                {'position': 1, 'color': {'r': .9, 'g': .7, 'b': .3, 'a': 1}}]},
+        ]
+        plan = self.fixture()
+        icon_entry = next(e for e in plan['entries'] if e['anchorId'] == 'icon')
+        icon_entry['path'] = '/nodes/icon/props/fills/0/color'
+        blocked = execution.scheme_anchor_requirements(plan, source)
+        self.assertEqual(blocked['status'], 'fail')
+        self.assertTrue(any('covered by a higher' in e['error'] for e in blocked['errors']))
+        icon_entry['path'] = '/nodes/icon/props/fills/1/gradientStops/0/color'
+        self.assertEqual(execution.scheme_anchor_requirements(plan, source)['status'], 'pass')
+        icon_entry['path'] = '/nodes/icon/props/fills/0/color'
+        icon['fills'][1]['opacity'] = .5
+        self.assertEqual(execution.scheme_anchor_requirements(plan, source)['status'], 'pass')
+
+    def test_no_tab_exception_needs_exhaustive_frozen_source_evidence(self):
+        source = snapshot()
+        plan = self.fixture()
+        plan['entries'] = [entry for entry in plan['entries'] if entry['anchorId'] != 'tab']
+        visible = execution._visible_nodes(audit.snapshot_document(source), source['rootId'])
+        plan['schemeAnchorApplicability'] = {'tab': {
+            'status': 'not-applicable', 'sourceRootId': source['rootId'],
+            'sourceHash': audit.digest(source),
+            'reviewedVisibleNodeIdsHash': audit.digest(sorted(k for k, v in visible.items() if v)),
+            'finding': 'no-visible-tab', 'userAuthorization': '允许无 Tab 豁免',
+            'reason': 'Every visible source node reviewed; this fixture has no Tab.'}}
+        self.assertEqual(execution.scheme_anchor_requirements(plan, source)['status'], 'pass')
+        self.assertEqual(execution.scheme_anchor_requirements(plan)['status'], 'fail')
+        changed = copy.deepcopy(source)
+        changed['nodes'][1]['props']['name'] = 'Selected Tab'
+        self.assertEqual(execution.scheme_anchor_requirements(plan, changed)['status'], 'fail')
+        bad = copy.deepcopy(plan)
+        bad['schemeAnchorApplicability']['tab']['sourceHash'] = 'stale'
+        self.assertEqual(execution.scheme_anchor_requirements(bad, source)['status'], 'fail')
+        bad = copy.deepcopy(plan)
+        bad['entries'].append(copy.deepcopy(self.fixture()['entries'][-1]))
+        self.assertEqual(execution.scheme_anchor_requirements(bad, source)['status'], 'fail')
 
 
 class CoverageChecks(unittest.TestCase):

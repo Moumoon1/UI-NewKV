@@ -16,6 +16,8 @@ import preflight_instance_writes as instance
 import preflight_visible_surfaces as visible_surfaces
 import interaction_entry_audit as interaction_entries
 import surface_system_audit as surface_system
+import quick_visual_risks as visual_risks
+import control_role_preflight as control_roles
 from theme_audit import color_relations, digest, mapped_document, read_json
 from contrast_audit import compare_contrast, transition_policy
 
@@ -25,7 +27,7 @@ STATIC_FILES = (
     'ruleLedger', 'visualUnits', 'colorRelations',
     'materialRelations', 'nodeMap',
 )
-REQUIRED_FILES = STATIC_FILES + ('contrastSamples',)
+REQUIRED_FILES = STATIC_FILES + ('contrastSamples', 'visualRiskReview')
 
 
 def run(spec, stage='full'):
@@ -80,10 +82,18 @@ def run(spec, stage='full'):
     check('plan-complete', lambda: audit.complete(
         source, projected, manifest, inputs['policy'], mapping))
     check('color-bindings-clear', lambda: audit.color_binding_audit(projected))
-    check('scheme-anchor-conformance', lambda: audit.scheme_anchor_requirements(manifest))
+    check('scheme-anchor-conformance', lambda: audit.scheme_anchor_requirements(manifest, source))
     check('icon-glyph-coverage', lambda: audit.icon_glyph_requirements(source, manifest, rules))
+    def control_role_check():
+        before, after = mapped_document(source, projected, mapping)
+        verifier = rules.get('contrast-baseline', {}).get('verifier', {})
+        return control_roles.inspect(before, after, manifest,
+                                     verifier.get('policy', 'source-baseline'))
+
+    check('icon-container-and-tab-state', control_role_check)
     check('text-range-coverage', lambda: audit.text_range_requirements(
-        source, manifest, rules.get('contrast-baseline', {}).get('verifier', {}).get('relationships', []), rules))
+        source, manifest, rules.get('contrast-baseline', {}).get('verifier', {}).get('relationships', []),
+        rules, projected))
     check('cross-mode-composite-coverage', lambda: audit.cross_mode_composite_requirements(
         source, projected, manifest, rules, mapping))
     check('visual-unit-coverage', lambda: audit.visual_units(
@@ -106,6 +116,8 @@ def run(spec, stage='full'):
 
     if stage == 'full':
         check('contrast-baseline', contrast)
+        check('early-visual-risks', lambda: visual_risks.inspect_review(
+            inputs['visualRiskReview'], digest(source), digest(projected)))
     failed = sorted(name for name, result in checks.items() if result.get('status') != 'pass')
     status = 'fail' if failed else 'ready-for-preview' if stage == 'static' else 'pass'
     return {'status': status, 'stage': stage, 'sourceHash': digest(source),

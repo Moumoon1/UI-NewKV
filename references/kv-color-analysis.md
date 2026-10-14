@@ -53,9 +53,9 @@ AI 必须检查最大色群是否来自大面积环境。若来自标题、Logo�
 
 在 `themeDecision` 中分别记录 `sourceKvTone/sourceUiMode/targetKvTone`，再记录 `requestedUiMode=light/dark/auto`。KV tone 根据各自主视觉的稳定环境判断；UI mode 根据页面、卡片和容器的最终合成表面判断，不能因 KV 深色就把亮卡片归为深色 UI，也不能把半透明 Paint 的存储 Alpha 直接当 UI 深浅。
 
-用户明确说“新 UI 只看深色／浅色”时用它过滤方案；未限制时不从新 KV 自动选出唯一 UI 模式，而是按《配色方案提案》的基础交互覆盖及背景备选规则生成。用户选定方案后记录 `targetUiModeSource=user-palette-selection`。当前任务内用户后续修改模式，以最新明确选择更新相关配方和失效场景，不重新复制页面。
+用户明确说“新 UI 只看深色／浅色”时用它过滤方案；未限制时先按下文判断深浅模式的环境支持度，再按《配色方案提案》的可行模式覆盖及背景备选规则生成。用户选定方案后记录 `targetUiModeSource=user-palette-selection`。当前任务内用户后续修改模式，以最新明确选择更新相关配方和失效场景，不重新复制页面。
 
-用户已限制 UI 模式时，该限制决定候选模式，KV 仍提供色相、冷暖、材质与光照来源；具体 `targetSurfaceDepth` 在各候选模式内选择。不能因为明亮 KV 就删除用户要求的深色 UI 候选，也不能因为 KV 深暗而拒绝浅色 UI 候选。优先在允许的既有表面、氛围和 Hero 衔接层处理过渡，不擅自调亮／调暗 KV 图片，也不把“KV 与 UI 深浅不同”当成阻塞。
+用户已限制 UI 模式时，该限制决定待评估模式，KV 仍提供色相、冷暖、材质与光照来源；具体 `targetSurfaceDepth` 在各候选模式内选择。不能只因 KV 明亮就删除用户要求的深色 UI，也不能只因 KV 深暗或下缘深色就拒绝用户要求的浅色 UI；仍须用环境证据与代表性衔接预览检验。若请求的模式经有界修正仍缺乏可延展表面依据或无法自然衔接，应说明冲突，不伪造通过方案。优先在允许的既有表面、氛围和 Hero 衔接层处理过渡，不擅自调亮／调暗 KV 图片。
 
 `sourceUiMode` 始终根据原稿 UI 实际判断，不能随用户的目标要求改写；`themeTransition` 用它与最终 `targetUiMode` 计算，供卡片氛围及文字规则使用；Icon／按钮还须结合 KV 明暗、色彩力度和真实宿主判断，不由转换方向直接推导 S/V 调整。用户指定整体深浅不表示所有局部组件都同深浅，实际宿主有例外时明确记录并按局部关系验收。
 
@@ -66,6 +66,7 @@ source/targetHeroEdgeTone  KV 与页面接缝明暗
 sourceKvTone/targetKvTone  旧 KV 与新 KV 的稳定环境明暗
 sourceUiMode               light / dark / mixed
 candidateTargetUiModes     light / dark 的适用候选集合
+modeFeasibility            每种待评估模式的环境来源、接缝方案、预览结论及保留/淘汰理由
 candidateSurfaceDepths     每套方案的 very-light / light / mid-light / mid-dark / dark
 选定后再记录 targetUiMode / targetSurfaceDepth / themeTransition
 ```
@@ -91,7 +92,7 @@ Y = 0.2126R_linear + 0.7152G_linear + 0.0722B_linear
 
 ### UI 模式与连续深度
 
-以下证据用于决定新 KV 的 tone，并为各候选 UI 模式选择表面深度、配色和衔接；用户已限制模式时不能推翻其要求。先建立 `highlightMask`，排除或降权镜面高光、亮字、窄亮边、点状星光、局部光束和主体孤立受光面，再综合：
+以下证据用于决定新 KV 的 tone 与各 UI 模式的可行性，再为可行模式选择表面深度、配色和衔接；用户已限制模式时只评估该模式，并保留冲突证据。先建立 `highlightMask`，排除或降权镜面高光、亮字、窄亮边、点状星光、局部光束和主体孤立受光面，再综合：
 
 1. 上下左右是否存在连续稳定的环境场。
 2. 亮区是可延展的天空/雾光/环境光，还是主体曝光和镜面反射。
@@ -100,11 +101,13 @@ Y = 0.2126R_linear + 0.7152G_linear + 0.0722B_linear
 5. 灰度、模糊和缩略图中由亮环境还是暗环境承担主要重量。
 6. 夜空、日光、棚拍等场景语义只作为证据，不作自动规则。
 
-中央主体很亮不自动等于浅色 UI；四周或底部略深也不自动等于深色 UI。类似“边缘较深但主体和稳定环境高调明亮”的 KV，通常应落在 `light/mid-light` 而不是近黑页面。反之，主体局部发光但整体被连续深暗环境包围时，可判为 `dark/mid-dark`。
+先把**明亮环境**与**明亮主体**分开：天空、雾光、日光或大面积弥散环境形成连续、相对稳定、可提炼为页面表面的亮区时，浅色 UI 有候选依据；圆环、徽章、金属镜面、标题或粒子的孤立亮点只支持局部强调和按钮取色，不自动支持整页浅色表面。连续暗环境包围局部发光主体，且排除高光后找不到可靠的明亮环境来源时，未限制模式的提案只保留深色 UI。反过来，KV 顶部/底部或四周深色并不自动排除浅色 UI；只要中部存在足够完整的明亮环境，须用实际可见下缘、过渡范围和可比面积预览检验浅色方案，不能单凭底边统计否决。不要用亮像素占比、最亮点或画面题材代替空间连续性判断。
+
+在 `modeFeasibility` 分别记录明亮/深暗环境的区域与连续性、局部发光排除依据、各模式的可延展表面来源、实际 Hero 下缘衔接办法，以及代表性面积预览结果。环境证据不确定时先做少量深浅对照预览再定候选集合；浅色预览若只能靠把孤立高光放大为整页底色、改变 KV 本身或产生明显割裂，则淘汰该模式并记理由。深色下缘是接缝问题，不是单独的模式禁令。
 
 每套候选内的 `targetUiMode` 决定文字大方向和跨模式规则，`targetSurfaceDepth` 决定页面、卡片和容器的真实重量；`targetHeroEdgeTone` 只决定接缝。允许组合如 `targetUiMode=light + targetSurfaceDepth=mid-light + targetHeroEdgeTone=dark`。用户选择后才把该组值提升为最终模式字段。
 
-`targetKvTone` 仍为 `mixed/uncertain` 时，降低可信度并按《配色方案提案》保留深浅 UI 候选；不得让底部统计替代判断。KV 接缝为 mixed 不会使用户已明确限制的候选模式变成 uncertain。用户选定方案前不执行跨模式氛围转换。
+`targetKvTone` 仍为 `mixed/uncertain` 时，降低可信度，先为深浅模式做代表性环境和接缝预览，再按 `modeFeasibility` 保留通过的候选；不得让底部统计替代判断。KV 接缝为 mixed 不会使用户已明确限制的待评估模式变成 uncertain。用户选定方案前不执行跨模式氛围转换。
 
 可靠时输出：
 

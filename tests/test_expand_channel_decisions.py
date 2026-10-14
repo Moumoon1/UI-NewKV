@@ -122,6 +122,16 @@ class ExpandChannelDecisionsTests(unittest.TestCase):
         self.assertEqual(report['status'], 'needs-review')
         self.assertTrue(report['protectionRisks'])
 
+    def test_exact_protected_channel_has_no_broad_scope_risk(self):
+        source = self.source()
+        path = next(row['path'] for row in color_inventory(source)['entries']
+                    if not row['inactive'] and row['nodeId'] == 'button')
+        rule = {'id': 'protected-exact', 'selector': {'path': path},
+                'role': 'protected-media-overlay', 'disposition': 'preserve',
+                'reason': 'Exact reviewed artwork channel.', 'ruleId': 'test-protection'}
+        report = build(source, self.decisions(source, [rule]))
+        self.assertFalse(report['protectionRisks'])
+
     def test_stale_snapshot_or_root_catch_all_rejected(self):
         source = self.source()
         decisions = self.decisions(source, [])

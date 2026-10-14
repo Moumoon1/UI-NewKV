@@ -12,7 +12,7 @@ from execution_audit import _visible_nodes, color_inventory
 from theme_audit import digest, escape, snapshot_document
 
 
-def build(source, manifest, media_cover_ids=(), disabled_root_ids=()):
+def build(source, manifest, media_cover_ids=(), disabled_root_ids=(), hidden_root_ids=()):
     doc = snapshot_document(source)
     visible = _visible_nodes(doc, source['rootId'])
     covers = set(media_cover_ids)
@@ -22,7 +22,14 @@ def build(source, manifest, media_cover_ids=(), disabled_root_ids=()):
     if any(root not in doc['nodes'] or doc['nodes'][root]['props'].get('opacity') != .5
            for root in disabled_roots):
         raise ValueError('disabled roots must be actual 50% visual units')
-    inventory = {row['path'] for row in color_inventory(source)['entries']}
+    hidden_roots = set(hidden_root_ids)
+    if not hidden_roots <= doc['nodes'].keys():
+        raise ValueError('unknown planned hidden root')
+    inventory = {row['path']: row for row in color_inventory(source)['entries']}
+    painted_text_nodes = {
+        row['nodeId'] for row in inventory.values()
+        if not row['inactive'] and '/textRuns/fills/' in row['path']
+    }
     indexed = {row['path']: row for row in manifest['entries']}
     if len(indexed) != len(manifest['entries']):
         raise ValueError('duplicate manifest paths')
@@ -47,7 +54,10 @@ def build(source, manifest, media_cover_ids=(), disabled_root_ids=()):
     entries, relationships = [], []
     for node_id, row in doc['nodes'].items():
         props = row['props']
-        if not visible.get(node_id) or props.get('type') != 'TEXT' or not props.get('characters'):
+        if (not visible.get(node_id) or props.get('type') != 'TEXT' or
+                not props.get('characters') or
+                node_id not in painted_text_nodes or
+                node_id in hidden_roots or any(parent in hidden_roots for parent in ancestors(node_id))):
             continue
         source_runs = props.get('textRuns', {}).get('fills') or []
         if not source_runs:
@@ -61,7 +71,8 @@ def build(source, manifest, media_cover_ids=(), disabled_root_ids=()):
             channels = sorted(path for path in inventory if path.startswith(prefix))
             if not channels:
                 raise ValueError('styled text range has no color channels: ' + node_id)
-            dispositions = {indexed.get(path, {}).get('disposition') for path in channels}
+            dispositions = {indexed.get(path, {}).get('disposition') for path in channels
+                            if not inventory[path]['inactive']}
             if media_cover:
                 if dispositions != {'preserve'}:
                     raise ValueError('media-cover text must preserve exact colors: ' + node_id)
@@ -86,7 +97,8 @@ def build(source, manifest, media_cover_ids=(), disabled_root_ids=()):
                 'minimumContrast': 3 if manifest.get('themeTransition') in
                     ('dark-to-light', 'light-to-dark') and not disabled_root else None})
         entries.append({'nodeId': node_id, 'ranges': ranges})
-    return {'schemaVersion': 1, 'sourceHash': digest(doc), 'entries': entries}, relationships
+    return {'schemaVersion': 1, 'sourceHash': digest(doc),
+            'hiddenRootIds': sorted(hidden_roots), 'entries': entries}, relationships
 
 
 def main():
@@ -95,12 +107,13 @@ def main():
     parser.add_argument('manifest', type=Path)
     parser.add_argument('--media-cover', action='append', default=[])
     parser.add_argument('--disabled-root', action='append', default=[])
+    parser.add_argument('--hidden-root', action='append', default=[])
     parser.add_argument('--out-plan', type=Path, required=True)
     parser.add_argument('--out-relationships', type=Path, required=True)
     args = parser.parse_args()
     plan, relationships = build(json.loads(args.source.read_text()),
                                 json.loads(args.manifest.read_text()), args.media_cover,
-                                args.disabled_root)
+                                args.disabled_root, args.hidden_root)
     args.out_plan.write_text(json.dumps(plan, ensure_ascii=False, indent=2))
     args.out_relationships.write_text(json.dumps(relationships, ensure_ascii=False, indent=2))
     print(json.dumps({'textNodes': len(plan['entries']),

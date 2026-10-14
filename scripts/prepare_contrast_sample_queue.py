@@ -110,8 +110,8 @@ def build(source, projected, manifest, rule_ledger):
     queue = []
     for pair in relations:
         pair_id = pair['id']
-        if pair_id not in ranges:
-            raise ValueError('frozen contrast pair lacks reviewed text range: ' + pair_id)
+        if pair.get('kind') != 'text' or pair_id not in ranges:
+            continue  # Other frozen visual relationships need their own native pixel review.
         node_id, run = ranges[pair_id]
         if pair.get('kind') != 'text' or pair.get('nodeIds', [None])[0] != node_id:
             raise ValueError('contrast pair kind or text node differs from range plan')
@@ -150,6 +150,7 @@ def build(source, projected, manifest, rule_ledger):
             'policy': verifier.get('policy', 'source-baseline'),
             'decisionContext': verifier.get('decisionContext'),
             'pairCount': len(queue),
+            'otherRelationshipCount': len(relations) - len(queue),
             'solidCandidatePairs': sum(all(row['candidates'][k][side]
                     for k in ('source', 'actual') for side in ('foreground', 'background'))
                     for row in queue), 'queue': queue,

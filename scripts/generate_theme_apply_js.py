@@ -26,6 +26,8 @@ def encoded_path(tokens):
 
 
 def build(source, manifest, write_plan, kv_source):
+    if write_plan.get('ctaButtonOverlay') is not None:
+        raise ValueError('raster CTA button overlay is forbidden; keep baked image pixels unchanged')
     if write_plan.get('sourceRootId') != source.get('rootId'):
         raise ValueError('write plan source mismatch')
     if write_plan.get('kvSourceId') != kv_source.get('rootId') or kv_source.get('errors'):
@@ -133,6 +135,21 @@ def build(source, manifest, write_plan, kv_source):
             'opacity': node_opacity, 'vector': vector,
             'detach': detach_paths,
             'kvId': kv_source['rootId'], 'kvNodeCount': len(kv_source['nodes'])}
+    transition = write_plan.get('kvTransitionOverlay')
+    if transition is not None:
+        if (not isinstance(transition, dict) or
+                transition.get('name') != '__kv_theme_transition__' or
+                transition.get('insertIndex') != 2 or
+                any(type(transition.get(key)) not in (int, float)
+                    for key in ('x', 'y', 'width', 'height')) or
+                transition['x'] != 0 or transition['width'] != source['nodes'][0]['props']['width'] or
+                transition['height'] <= 0 or transition['y'] < 0 or
+                transition['y'] + transition['height'] > kv_source['nodes'][0]['props']['height'] or
+                not isinstance(transition.get('color'), dict) or
+                any(type(transition['color'].get(key)) not in (int, float) or
+                    not 0 <= transition['color'][key] <= 1 for key in 'rgb')):
+            raise ValueError('invalid independent KV transition overlay')
+        data['transition'] = transition
     program = r'''async function applyThemeWriteToClone(figma,clone){
 const D=__DATA__;
 const previousSkip=figma.skipInvisibleInstanceChildren;
@@ -189,8 +206,20 @@ for(const [p,value] of D.opacity){const n=node(p);n.opacity=value;opacitySetters
 let vectorChecked=0;
 for(const [p,changes] of D.vector){const n=node(p),network=n.vectorNetwork;for(const [path,index] of changes){if(!sameColor(network,path,index))throw Error('derived vector mirror mismatch '+n.id);vectorChecked++;}}
 clone.insertChild(1,kv);
+let transitionId=null;
+if(D.transition){
+ const t=D.transition,fade=figma.createRectangle();
+ clone.insertChild(t.insertIndex,fade);fade.name=t.name;
+ fade.x=t.x;fade.y=t.y;fade.resize(t.width,t.height);
+ const c=t.color;
+ fade.fills=[{type:'GRADIENT_LINEAR',gradientTransform:[[0,1,0],[-1,0,1]],
+  gradientStops:[{position:0,color:{...c,a:0}},{position:1,color:{...c,a:1}}]}];
+ fade.locked=true;transitionId=fade.id;
+ if(fade.x!==t.x||fade.y!==t.y||fade.width!==t.width||fade.height!==t.height||!fade.locked)
+  throw Error('KV transition overlay readback mismatch');
+}
 return {status:'pass',setters,rangeSetters,opacitySetters,colorsChecked,vectorChecked,detachedCount,
- kvCloneId:kv.id,kvNodeCount:kvCount,kvLocked:kv.locked,kvPosition:[kv.x,kv.y],kvSize:[kv.width,kv.height]};
+ kvCloneId:kv.id,kvNodeCount:kvCount,kvLocked:kv.locked,kvPosition:[kv.x,kv.y],kvSize:[kv.width,kv.height],transitionId};
 }finally{figma.skipInvisibleInstanceChildren=previousSkip;}
 }'''
     return program.replace('__DATA__', compact(data))

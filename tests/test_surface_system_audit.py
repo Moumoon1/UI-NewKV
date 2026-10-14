@@ -37,6 +37,16 @@ class SurfaceSystemAuditTests(unittest.TestCase):
         self.assertFalse(_boundary_group_geometry_valid(
             candidate, {**group, 'samplingBasis': ''}, (0, 0, 400, 800)))
 
+    def test_fractional_root_bottom_uses_available_inward_pixels(self):
+        candidate = {'kind': 'clip-edge', 'rootLocalEdge': {
+            'side': 'bottom', 'coordinate': 799.5, 'span': [0, 400]}}
+        group = {'nativePixels': [400, 800], 'xy': [[200, 797], [200, 798]],
+                 'samplingMode': 'root-edge-inward',
+                 'samplingBasis': 'The last pixel is partially clipped; use two fully covered inward rows.'}
+        self.assertTrue(_boundary_group_geometry_valid(candidate, group, (0, 0, 400, 800)))
+        group['xy'] = [[200, 798], [200, 799]]
+        self.assertFalse(_boundary_group_geometry_valid(candidate, group, (0, 0, 400, 800)))
+
     def test_root_edge_mode_cannot_replace_internal_cross_boundary_sampling(self):
         candidate = {'kind': 'clip-edge', 'rootLocalEdge': {
             'side': 'right', 'coordinate': 380, 'span': [100, 220]}}
@@ -246,6 +256,32 @@ class SurfaceSystemAuditTests(unittest.TestCase):
                 'maximumChannelDelta': 8}]}}
         self.assertEqual(inspect(source, actual, manifest, rules)['status'], 'pass')
 
+    def test_adjacent_painted_units_require_source_topology_pixels(self):
+        source, actual, manifest, rules, _ = self.fixture()
+        for doc in (source, actual):
+            next(node for node in doc['nodes'] if node['id'] == 'task')['props']['y'] = 220
+        source_hash = digest(snapshot_document(source))
+        manifest['sourceHash'] = source_hash
+        manifest['surfaceSystemPlan']['sourceHash'] = source_hash
+        candidate_id = 'adjacent:root:income:task'
+        found = discover(source)
+        self.assertIn(candidate_id, [row['id'] for row in found['boundaryCandidates']])
+        result = inspect(source, actual, manifest, rules)
+        self.assertEqual(result['status'], 'fail')
+        self.assertIn(candidate_id, result['errors'][-1]['missingCandidateIds'])
+        manifest['surfaceSystemPlan']['boundaryReviews'] = [{
+            'candidateId': candidate_id, 'decision': 'continuous',
+            'displayedGroupId': 'income-task-join',
+            'basis': 'The two painted source units meet at this edge.'}]
+        group = {'id': 'income-task-join', 'relationType': 'source-topology',
+                 'nodeIds': ['income', 'task'], 'xy': [[50, 219], [50, 221]],
+                 'nativePixels': [400, 800], 'maximumChannelDelta': 16}
+        rules['surface-continuity'] = {'applicable': True, 'verifier': {
+            'type': 'displayed-relations', 'groups': [group]}}
+        self.assertEqual(inspect(source, actual, manifest, rules)['status'], 'pass')
+        group['xy'] = [[50, 100], [50, 101]]
+        self.assertEqual(inspect(source, actual, manifest, rules)['status'], 'fail')
+
     def test_clipped_boundary_rejects_placeholder_coordinates_and_loose_delta(self):
         source, actual, manifest, rules, paths = self.fixture(clipped=True)
         manifest['surfaceSystemPlan']['surfaces'].append({
@@ -263,7 +299,7 @@ class SurfaceSystemAuditTests(unittest.TestCase):
             'type': 'displayed-relations', 'groups': [group]}}
         result = inspect(source, actual, manifest, rules)
         self.assertEqual(result['status'], 'fail')
-        self.assertTrue(any('actual clipping' in row['error'] for row in result['errors']))
+        self.assertTrue(any('discovered edge' in row['error'] for row in result['errors']))
         group['xy'] = [[379, 130], [381, 130]]
         group['maximumChannelDelta'] = 48
         result = inspect(source, actual, manifest, rules)

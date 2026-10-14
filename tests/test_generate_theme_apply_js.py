@@ -39,6 +39,12 @@ class GenerateThemeApplyTests(unittest.TestCase):
         self.assertIn('kv.locked=true', program)
         self.assertIn('kvLocked:kv.locked', program)
 
+    def test_baked_raster_button_cannot_gain_an_overlay(self):
+        source, manifest, plan, kv = self.fixture()
+        plan['ctaButtonOverlay'] = {'name': '__kv_cta_button_overlay__'}
+        with self.assertRaisesRegex(ValueError, 'overlay is forbidden'):
+            build(source, manifest, plan, kv)
+
     def test_styled_text_alpha_is_written_and_read_back(self):
         source, manifest, plan, kv = self.fixture()
         source['nodes'][2]['children'] = ['label']

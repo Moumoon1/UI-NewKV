@@ -20,6 +20,7 @@ class PreflightFullTests(unittest.TestCase):
         result = preflight_full.run({'sourceBefore': '/tmp/nonexistent.json'})
         self.assertEqual(result['status'], 'fail')
         self.assertIn('writePlan', result['missingInputs'])
+        self.assertIn('visualRiskReview', result['missingInputs'])
 
     def test_channel_coverage_alone_cannot_authorize_write(self):
         source = {'schemaVersion': 1, 'rootId': 'root', 'errors': [], 'nodes': [
@@ -51,7 +52,8 @@ class PreflightFullTests(unittest.TestCase):
                   'writePlan': {'sourceRootId': 'root', 'operations': []},
                   'policy': {'schemaVersion': 1, 'allowedChanges': [], 'protectedPaths': []},
                   'ruleLedger': ledger, 'visualUnits': {}, 'colorRelations': {'groups': []},
-                  'contrastSamples': {}, 'materialRelations': {'schemaVersion': 1, 'relations': []},
+                  'contrastSamples': {}, 'visualRiskReview': {},
+                  'materialRelations': {'schemaVersion': 1, 'relations': []},
                   'nodeMap': {}}
         with tempfile.TemporaryDirectory() as temp:
             paths = {}

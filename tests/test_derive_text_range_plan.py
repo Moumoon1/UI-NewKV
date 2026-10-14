@@ -43,6 +43,54 @@ class TextRangeDerivationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build(source, manifest)
 
+    def test_hidden_paint_in_visible_range_keeps_path_without_mixed_action(self):
+        source, manifest = fixture()
+        source['nodes'][1]['props']['textRuns']['fills'][0]['value'].insert(0, {
+            'type': 'SOLID', 'visible': False, 'opacity': 1,
+            'color': {'r': .8, 'g': .1, 'b': .1}})
+        manifest['entries'] = [{'path': item['path'],
+                                'disposition': 'ignore' if item['inactive'] else 'change',
+                                'role': 'inactive-stored' if item['inactive'] else 'text.primary'}
+                               for item in color_inventory(source)['entries']]
+        plan, pairs = build(source, manifest)
+        self.assertEqual(len(plan['entries'][0]['ranges'][0]['channelPaths']), 2)
+        manifest['textRangePlan'] = plan
+        rules = {'readability': {'scopeNodeIds': ['label']}}
+        self.assertEqual(text_range_requirements(source, manifest, pairs, rules)['status'], 'pass')
+
+    def test_planned_hidden_text_has_no_rendered_contrast_pair(self):
+        source, manifest = fixture()
+        plan, pairs = build(source, manifest, hidden_root_ids=['label'])
+        self.assertEqual(plan['entries'], [])
+        self.assertEqual(pairs, [])
+        manifest['textRangePlan'] = plan
+        projected = {'schemaVersion': 1, 'rootId': 'root', 'errors': [],
+                     'nodes': [dict(row, props=dict(row['props'])) for row in source['nodes']]}
+        projected['nodes'][1]['props']['opacity'] = 0
+        rules = {'readability': {'scopeNodeIds': []}}
+        self.assertEqual(text_range_requirements(source, manifest, pairs, rules,
+                                                 projected)['status'], 'pass')
+        projected['nodes'][1]['props']['opacity'] = 1
+        self.assertEqual(text_range_requirements(source, manifest, pairs, rules,
+                                                 projected)['status'], 'fail')
+
+    def test_zero_alpha_text_needs_no_visible_range_or_hide_operation(self):
+        source, manifest = fixture()
+        for run in source['nodes'][1]['props']['textRuns']['fills']:
+            run['value'][0]['opacity'] = 0
+        manifest['entries'] = [{
+            'path': item['path'],
+            'disposition': 'ignore' if item['inactive'] else 'change',
+            'role': 'inactive-stored' if item['inactive'] else 'surface.page',
+        } for item in color_inventory(source)['entries']]
+        plan, pairs = build(source, manifest)
+        self.assertEqual(plan['entries'], [])
+        self.assertEqual(pairs, [])
+        manifest['textRangePlan'] = plan
+        self.assertEqual(text_range_requirements(
+            source, manifest, pairs, {'readability': {'scopeNodeIds': []}},
+            source)['status'], 'pass')
+
     def test_exact_half_opacity_disabled_button_is_measured_not_forced_to_three(self):
         source, manifest = fixture()
         source['nodes'][0]['children'] = ['button']

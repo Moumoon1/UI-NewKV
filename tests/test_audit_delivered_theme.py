@@ -84,8 +84,15 @@ class DeliveredThemeAuditTests(unittest.TestCase):
         final = {'schemaVersion': 1, 'rootId': 'f', 'errors': [],
                  'nodes': [row('f', 'page', ['x', 'kv', 'y']),
                            row('x', 'f', []), row('kv', 'f', []), row('y', 'f', [])]}
-        self.assertEqual(structural_map(source, final, 'f', excluded_root='kv'),
+        self.assertEqual(structural_map(source, final, 'f', excluded_roots={'kv'}),
                          {'s': 'f', 'b': 'y', 'a': 'x'})
+
+    def test_delivery_rejects_raster_button_overlay_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = list(self.delivered_fixture(directory))
+            args[5]['ctaButtonOverlay'] = {'name': '__kv_cta_button_overlay__'}
+            with self.assertRaisesRegex(ValueError, 'overlay is forbidden'):
+                audit(*args)
 
     def test_equal_text_paints_ignore_removed_variable_alias(self):
         expected = [{'type': 'SOLID', 'opacity': 1,

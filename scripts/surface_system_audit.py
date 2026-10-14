@@ -186,13 +186,53 @@ def _geometry_evidence(doc, node_id, root_id, surfaces):
 
 def _boundary_candidates(doc, root_id, surfaces):
     result = {}
+    painted_cache = {}
 
     def painted(node_id):
+        if doc['nodes'][node_id]['props'].get('type') == 'TEXT':
+            return False
         for paint in doc['nodes'][node_id]['props'].get('fills') or []:
             if (isinstance(paint, dict) and paint.get('visible', True) and
                     paint.get('opacity', 1) > 0 and paint.get('type') != 'IMAGE'):
                 return True
         return False
+
+    def painted_subtree(node_id):
+        if node_id not in painted_cache:
+            painted_cache[node_id] = (_visible(doc, node_id) and
+                (painted(node_id) or any(painted_subtree(child_id)
+                                      for child_id in doc['nodes'][node_id]['children'])))
+        return painted_cache[node_id]
+
+    # Sibling visual units that meet along an edge can be one displayed surface
+    # even when their colors come from different nested paints or alpha stacks.
+    # Discover the contact from source geometry, before authored relationship
+    # groups can accidentally omit it.
+    root_box = _box(doc, root_id, root_id)
+    for parent_id, parent in doc['nodes'].items():
+        siblings = [(node_id, _box(doc, node_id, root_id)) for node_id in parent['children']
+                    if painted_subtree(node_id)]
+        siblings = [(node_id, box) for node_id, box in siblings if box]
+        for index, (left_id, left) in enumerate(siblings):
+            for right_id, right in siblings[index + 1:]:
+                for axis, side in ((1, 'bottom'), (0, 'right')):
+                    lower, upper = (left, right) if left[axis] <= right[axis] else (right, left)
+                    lower_id, upper_id = ((left_id, right_id) if left[axis] <= right[axis]
+                                          else (right_id, left_id))
+                    edge = lower[axis + 2]
+                    overlap = (max(lower[1-axis], upper[1-axis]),
+                               min(lower[3-axis], upper[3-axis]))
+                    if root_box:
+                        overlap = (max(overlap[0], root_box[1-axis]),
+                                   min(overlap[1], root_box[3-axis]))
+                    if (abs(edge - upper[axis]) > .5 or overlap[1] - overlap[0] < 8 or
+                            (root_box and not root_box[axis] <= edge <= root_box[axis+2])):
+                        continue
+                    candidate_id = 'adjacent:' + parent_id + ':' + lower_id + ':' + upper_id
+                    result[candidate_id] = {'id': candidate_id, 'kind': 'adjacent-surfaces',
+                        'nodeIds': [lower_id, upper_id],
+                        'rootLocalEdge': {'side': side, 'coordinate': edge,
+                                          'span': list(overlap)}}
 
     # Any painted descendant crossing a clipping edge creates a review duty.
     for clip_id, clip in doc['nodes'].items():
@@ -349,6 +389,8 @@ def _boundary_group_geometry_valid(candidate, group, root_box):
         extent = expected_native[axis]
         side = edge['side']
         expected_cross = ([0, 1] if side in {'left', 'top'} and coordinate == 0
+                          else [extent - 3, extent - 2]
+                          if side in {'right', 'bottom'} and coordinate == extent - .5
                           else [extent - 2, extent - 1]
                           if side in {'right', 'bottom'} and coordinate == extent
                           else None)
@@ -362,7 +404,7 @@ def _boundary_group_geometry_valid(candidate, group, root_box):
 
 
 def discover(source):
-    """List every visible non-text painted node and clip-edge obligation."""
+    """List visible painted nodes and their discovered boundary obligations."""
     doc, root_id, all_paths = _candidate_nodes(source)
     painted = [{
         'nodeId': node_id,
@@ -370,11 +412,15 @@ def discover(source):
         'carrierPaths': paths,
         'rootLocalBox': list(_box(doc, node_id, root_id) or []),
     } for node_id, paths in sorted(all_paths.items())]
+    boundaries = list(_boundary_candidates(doc, root_id, {}).values())
     return {'schemaVersion': 1, 'sourceHash': digest(doc),
             'paintedCandidates': painted,
-            'clipBoundaryCandidates': list(_boundary_candidates(doc, root_id, {}).values()),
-            'note': ('This list has no size cutoff. Semantic roles and card ancestry decide '
-                     'which nodes surfaceSystemPlan must classify; geometry is review evidence.')}
+            'boundaryCandidates': boundaries,
+            'clipBoundaryCandidates': [row for row in boundaries if row['kind'] == 'clip-edge'],
+            'note': ('The painted-node list has no size cutoff. Semantic roles and card '
+                     'ancestry decide which nodes surfaceSystemPlan must classify. '
+                     'Boundary discovery finds ordinary axis-aligned sibling contacts; '
+                     'irregular or overlapping contours still need a full native visual review.')}
 
 
 def inspect(source, actual, manifest, rules, mapping=None):
@@ -619,17 +665,21 @@ def inspect(source, actual, manifest, rules, mapping=None):
         decision = review.get('decision')
         maximum = group.get('maximumChannelDelta') if group else None
         delta_valid = (type(maximum) in (int, float) and math.isfinite(maximum) and
-                       0 <= maximum <= (16 if decision in {'continuous', 'fade'} else 255))
+                       0 <= maximum <= (16 if decision in {'continuous', 'fade'} or
+                                               candidate and candidate['kind'] == 'adjacent-surfaces'
+                                               else 255))
         geometry_valid = bool(candidate and group and
                               _boundary_group_geometry_valid(
                                   candidate, group, _box(source_doc, root_id, root_id)))
         if (not candidate or review.get('decision') not in {'continuous', 'intentional-edge', 'fade'} or
                 not isinstance(review.get('basis'), str) or not review['basis'].strip() or
                 not group or not set(candidate['nodeIds']) <= set(group.get('nodeIds', [])) or
+                (candidate['kind'] == 'adjacent-surfaces' and
+                 group.get('relationType') != 'source-topology') or
                 not delta_valid or not geometry_valid):
             errors.append({'candidateId': candidate_id,
                            'error': ('risky boundary needs a tight native 1:1 relation '
-                                     'straddling the actual clipping/terminal edge')})
+                                     'straddling the discovered edge')})
 
     return {'status': 'fail' if errors else 'pass', 'errors': errors,
             'candidateSurfaceCount': len(candidates), 'surfaceCount': len(surfaces),

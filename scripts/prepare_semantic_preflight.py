@@ -43,7 +43,8 @@ def build(source, manifest, reviewed):
         raise ValueError('surfaceSystemPlan must bind this source snapshot')
     enriched['surfaceSystemPlan'] = surface_plan
     text_plan, text_relationships = text_range_plan(
-        source, manifest, reviewed['mediaCoverIds'], reviewed['disabledRootIds'])
+        source, manifest, reviewed['mediaCoverIds'], reviewed['disabledRootIds'],
+        reviewed['hiddenRootIds'])
     enriched['textRangePlan'] = text_plan
     if reviewed['iconRootIds']:
         enriched['iconGlyphPlan'] = icon_glyph_plan(
