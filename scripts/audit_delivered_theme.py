@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Audit one delivered Figma clone against its frozen source, plan and preview."""
 import argparse
+from copy import deepcopy
 import json
 from pathlib import Path
 
 from PIL import Image, ImageChops
 
 from execution_audit import color_binding_audit, color_inventory
+from generate_theme_apply_js import normalize_geometry_ops, normalize_export_bounds, normalize_kv_placement
 from theme_audit import at, escape, snapshot_document, target_equal
 
 
@@ -62,8 +64,28 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
         raise ValueError('raster CTA button overlay is forbidden')
     errors = []
     src, exp, dst, kv_src = rows(source), rows(expected), rows(final), rows(kv_source)
+    geometry_ops = normalize_geometry_ops(source, write_plan.get('geometryOps', []))
+    geometry_targets = {}
+    for op in geometry_ops:
+        geometry_targets[(op['sourceId'], op['property'])] = op['after']
+        if 'derivedRelativeTransform' in op:
+            geometry_targets[(op['sourceId'], 'relativeTransform')] = op['derivedRelativeTransform']['after']
+        for derived in op.get('derivedNodeTranslations', []):
+            geometry_targets[(derived['sourceId'], 'y')] = derived['after']
+            if 'derivedRelativeTransform' in derived:
+                geometry_targets[(derived['sourceId'], 'relativeTransform')] = derived['derivedRelativeTransform']['after']
+    export_bounds = normalize_export_bounds(source, expected, write_plan.get('exportBounds'))
+    for (node_id, prop), target in geometry_targets.items():
+        if not target_equal(exp[node_id]['props'].get(prop), target):
+            errors.append(f'geometry projection differs from frozen operation: {node_id}/{prop}')
     final_root = dst[final['rootId']]
-    candidates = [child for child in final_root['children']
+    if not isinstance(write_plan.get('kvPlacement'), dict):
+        raise ValueError('kvPlacement needs frozen childIndex, x and y')
+    placement = normalize_kv_placement(source, write_plan['kvPlacement'])
+    kv_parent = final_root
+    for index in placement['parentPath']:
+        kv_parent = dst[kv_parent['children'][index]]
+    candidates = [child for child in kv_parent['children']
                   if dst[child]['props'].get('name') == kv_src[kv_source['rootId']]['props']['name']
                   and target_equal(dst[child]['props'].get('width'),
                                    kv_src[kv_source['rootId']]['props'].get('width'))
@@ -111,13 +133,9 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
                 not target_equal(paints[0]['gradientStops'][0]['color'].get('a'), 0) or
                 not target_equal(paints[0]['gradientStops'][1]['color'].get('a'), 1)):
             errors.append('KV transition gradient differs from frozen plan')
-    placement = write_plan.get('kvPlacement')
-    if (not isinstance(placement, dict) or
-            type(placement.get('childIndex')) is not int or
-            not 0 <= placement['childIndex'] < len(final_root['children']) or
-            any(type(placement.get(k)) not in (int, float) for k in ('x', 'y'))):
-        raise ValueError('kvPlacement needs frozen childIndex, x and y')
-    if final_root['children'][placement['childIndex']] != kv_root:
+    if (placement['childIndex'] >= len(kv_parent['children']) or
+            kv_parent['children'][placement['childIndex']] != kv_root or
+            dst[kv_root]['parentId'] != mapping[placement['parentSourceId']]):
         errors.append('KV is not at the frozen child index')
     if any(not target_equal(dst[kv_root]['props'].get(k), placement[k]) for k in ('x', 'y')):
         errors.append('KV position differs from frozen placement')
@@ -143,7 +161,10 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
             errors.append(f'node type changed unexpectedly: {old_id}')
         for key in geometry_keys:
             if key in before:
-                actual_value, old_value = after.get(key), before[key]
+                actual_value = after.get(key)
+                old_value = geometry_targets.get((old_id, key), before[key])
+                if not target_equal(planned.get(key), old_value):
+                    errors.append(f'unplanned geometry projection: {old_id}/{key}')
                 if key in ('width', 'height') and isinstance(actual_value, (int, float)):
                     drift = abs(actual_value - old_value)
                     max_geometry_drift = max(max_geometry_drift, drift)
@@ -151,10 +172,13 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
                         errors.append(f'geometry changed: {old_id}/{key}')
                 elif not target_equal(actual_value, old_value):
                     errors.append(f'geometry/text changed: {old_id}/{key}')
-        if old_id != source['rootId']:
-            for key in ('x', 'y'):
+        for key in ('x', 'y'):
+            if old_id != source['rootId'] or (old_id, key) in geometry_targets:
                 if key in before:
-                    actual_value, old_value = after.get(key), before[key]
+                    actual_value = after.get(key)
+                    old_value = geometry_targets.get((old_id, key), before[key])
+                    if not target_equal(planned.get(key), old_value):
+                        errors.append(f'unplanned position projection: {old_id}/{key}')
                     if isinstance(actual_value, (int, float)):
                         drift = abs(actual_value - old_value)
                         max_geometry_drift = max(max_geometry_drift, drift)
@@ -162,6 +186,16 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
                             errors.append(f'local position changed: {old_id}/{key}')
                     elif not target_equal(actual_value, old_value):
                         errors.append(f'local position changed: {old_id}/{key}')
+        if 'relativeTransform' in before:
+            wanted = deepcopy(geometry_targets.get((old_id, 'relativeTransform'), before['relativeTransform']))
+            if not target_equal(planned.get('relativeTransform'), wanted):
+                errors.append(f'unplanned transform projection: {old_id}')
+            if old_id == source['rootId']:
+                # The cloned page is intentionally placed to the right. Its
+                # matrix rotation/scale and vertical position remain guarded.
+                wanted[0][2] = after.get('x', wanted[0][2])
+            if not target_equal(after.get('relativeTransform'), wanted):
+                errors.append(f'local transform changed: {old_id}')
     for old_id, new_id in kv_mapping.items():
         before, after = kv_src[old_id]['props'], dst[new_id]['props']
         excluded = {'x', 'y', 'relativeTransform', 'locked'} if old_id == kv_source['rootId'] else set()
@@ -230,7 +264,8 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
     if bindings['status'] != 'pass':
         errors.append(f'UI color bindings remain: {bindings["residualCount"]}')
     with Image.open(preview_png) as a, Image.open(final_png) as b:
-        dimensions = tuple(round(final_root['props'][k]) for k in ('width', 'height'))
+        native = export_bounds['target'] if export_bounds is not None else final_root['props']
+        dimensions = tuple(round(native[k]) for k in ('width', 'height'))
         if a.size != b.size or a.size != dimensions:
             errors.append('preview/final screenshot dimensions differ')
             pixel_equal = False
@@ -245,6 +280,9 @@ def audit(source, expected, final, kv_source, manifest, write_plan, preview_png,
             'sourceNodes': len(src),
             'finalNodes': len(dst), 'kvNodes': len(kv_mapping),
             'mappedUiNodes': len(mapping), 'detachedInstances': len(detached),
+            'geometryOperationsChecked': len(geometry_ops),
+            'derivedGeometryTranslationsChecked': sum(len(op.get('derivedNodeTranslations', [])) for op in geometry_ops),
+            'nativeExportBounds': export_bounds,
             'colorChannelsChecked': channels_checked,
             'textSpansChecked': text_spans_checked,
             'maxGeometryDriftPx': max_geometry_drift,

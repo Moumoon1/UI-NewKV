@@ -819,6 +819,8 @@ def scheme_anchor_requirements(manifest, source=None):
 
     entries = manifest.get('entries', [])
     source_doc = snapshot_document(source) if source is not None else None
+    source_channels = ({row['path']: row for row in color_inventory(source)['entries']}
+                       if source is not None else {})
     applicability = manifest.get('schemeAnchorApplicability', {})
     if not isinstance(applicability, dict) or set(applicability) - {'tab'}:
         errors.append({'error': 'only tab may have an anchor applicability exception'})
@@ -837,6 +839,23 @@ def scheme_anchor_requirements(manifest, source=None):
                 named_tabs = sorted(node_id for node_id in visible_ids if
                                     re.search(r'(?i)(?:^|[^a-z])tabs?(?:$|[^a-z])|选中.?tab|标签页',
                                               str(doc['nodes'][node_id]['props'].get('name', ''))))
+                reviewed_names = tab_exception.get('namedCandidateReviews', []) if isinstance(tab_exception, dict) else []
+                rejected_names = []
+                for node_id in named_tabs:
+                    records = [r for r in reviewed_names if r.get('nodeId') == node_id]
+                    descendants, pending = [], [node_id]
+                    while pending:
+                        current = pending.pop(); descendants.append(current)
+                        pending.extend(doc['nodes'][current]['children'])
+                    visible_text = [i for i in descendants if visible.get(i) and
+                                    doc['nodes'][i]['props'].get('type') == 'TEXT' and
+                                    doc['nodes'][i]['props'].get('characters')]
+                    valid_review = (len(records) == 1 and not visible_text and
+                                    records[0].get('finding') == 'legacy-name-non-tab-artwork' and
+                                    records[0].get('subtreeHash') == digest([doc['nodes'][i] for i in sorted(descendants)]) and
+                                    isinstance(records[0].get('reason'), str) and records[0]['reason'].strip())
+                    if not valid_review:
+                        rejected_names.append(node_id)
                 expected = {'status': 'not-applicable', 'sourceRootId': source['rootId'],
                             'sourceHash': digest(source),
                             'reviewedVisibleNodeIdsHash': digest(visible_ids),
@@ -845,9 +864,9 @@ def scheme_anchor_requirements(manifest, source=None):
                 if (not isinstance(tab_exception, dict) or
                         any(tab_exception.get(key) != value for key, value in expected.items()) or
                         not isinstance(tab_exception.get('reason'), str) or
-                        not tab_exception['reason'].strip() or named_tabs):
+                        not tab_exception['reason'].strip() or rejected_names):
                     errors.append({'anchorId': 'tab', 'error': 'no-Tab exception lacks bound exhaustive source evidence',
-                                   'namedTabCandidates': named_tabs})
+                                   'namedTabCandidates': rejected_names})
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append({'anchorId': 'tab', 'error': 'invalid no-Tab source evidence', 'detail': str(exc)})
     for name in names:
@@ -865,7 +884,14 @@ def scheme_anchor_requirements(manifest, source=None):
             if entry.get('inactive') is True:
                 errors.append({'anchorId': name, 'path': entry.get('path'),
                                'error': 'anchor channel cannot be inactive'})
-            if entry.get('disposition') != 'change' or not _anchor_matches(entry.get('target'), anchor):
+            preserved = source_channels.get(entry.get('path'))
+            preserved_anchor = (entry.get('disposition') == 'preserve' and
+                                preserved is not None and not preserved['inactive'] and
+                                _anchor_matches(preserved['source'], anchor) and
+                                isinstance(entry.get('reason'), str) and bool(entry['reason'].strip()) and
+                                ('target' not in entry or _anchor_matches(entry['target'], anchor)))
+            if not preserved_anchor and (entry.get('disposition') != 'change' or
+                                         not _anchor_matches(entry.get('target'), anchor)):
                 errors.append({'anchorId': name, 'path': entry.get('path'),
                                'error': 'anchor target differs from selected schemeAnchorContract'})
             if name == 'icon' and source_doc is not None:
@@ -910,6 +936,16 @@ def verify_displayed_relations(source, actual, rule, evidence):
     results, images, native_evidence = [], {}, []
     for group in groups:
         points, limit = group.get('xy'), group.get('maximumChannelDelta')
+        actual_points = group.get('actualXy', points)
+        actual_size = group.get('actualNativePixels', group.get('nativePixels'))
+        if 'actualXy' in group or 'actualNativePixels' in group:
+            if (not isinstance(group.get('coordinateBasis'), str) or
+                    not group['coordinateBasis'].strip() or
+                    not isinstance(actual_points, list) or
+                    not isinstance(points, list) or len(actual_points) != len(points) or
+                    not isinstance(actual_size, list) or len(actual_size) != 2 or
+                    any(type(v) is not int or v <= 0 for v in actual_size)):
+                raise ValueError('changed native coordinates require exact paired points, dimensions and frozen basis')
         kind = group.get('relationType', 'continuity')
         if kind not in {'continuity', 'source-topology', 'appearance-family',
                         'source-appearance-equivalence', 'surface-linked-appearance'} or not isinstance(points, list) or len(points) < 2:
@@ -919,6 +955,17 @@ def verify_displayed_relations(source, actual, rule, evidence):
         if kind == 'source-topology' and (
                 type(limit) not in (int, float) or not 0 <= limit <= 16):
             raise ValueError('source topology needs a tolerance no greater than 16/255')
+        alpha_topology = group.get('alphaTopology')
+        if alpha_topology is not None:
+            frozen_alpha = alpha_topology.get('sourceAlpha') if isinstance(alpha_topology, dict) else None
+            if (kind != 'source-topology' or not isinstance(alpha_topology, dict) or
+                    alpha_topology.get('mode') != 'preserve-exact' or
+                    not isinstance(alpha_topology.get('basis'), str) or
+                    not alpha_topology['basis'].strip() or
+                    not isinstance(frozen_alpha, list) or len(frozen_alpha) != len(points) or
+                    any(type(v) is not int or not 0 <= v <= 255 for v in frozen_alpha) or
+                    255 not in frozen_alpha or all(v == 255 for v in frozen_alpha)):
+                raise ValueError('alpha topology requires frozen source-topology edge evidence, exact alpha bytes, and opaque plus nonopaque samples')
         if kind in {'appearance-family', 'source-appearance-equivalence', 'surface-linked-appearance'}:
             if not isinstance(group.get('basis'), str) or not group['basis'].strip():
                 raise ValueError('appearance relation needs predeclared source evidence')
@@ -938,20 +985,49 @@ def verify_displayed_relations(source, actual, rule, evidence):
             raise ValueError('continuity nodes must exist in both corresponding snapshots')
         measured = {}
         for side, doc in [('source', source), ('actual', actual)]:
+            side_points = points if side == 'source' else actual_points
+            side_size = group.get('nativePixels') if side == 'source' else actual_size
             values = index[group['id']].get(side)
-            if not isinstance(values, list) or len(values) != len(points) or [v.get('xy') for v in values] != points:
+            if not isinstance(values, list) or len(values) != len(side_points) or [v.get('xy') for v in values] != side_points:
                 raise ValueError('continuity sampling coordinates differ from the frozen responsibilities')
             if any(set(v) != {'image', 'xy'} for v in values):
                 raise ValueError('displayed continuity requires native screenshot pixels')
-            colors = [displayed_color(doc, v, images) for v in values]
+            rgba = None
+            if alpha_topology is None:
+                colors = [displayed_color(doc, v, images) for v in values]
+            else:
+                # This explicit edge contract alone may read nonopaque pixels.
+                # Keep native RGBA; do not invent an opaque host or use hidden RGB.
+                import hashlib
+                from pathlib import Path
+                from PIL import Image
+                rgba = []
+                for value in values:
+                    ref = value['image']; key = (ref['path'], ref['sha256'])
+                    if key not in images:
+                        if hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest() != ref['sha256']:
+                            raise ValueError('screenshot changed: ' + ref['path'])
+                        images[key] = Image.open(ref['path']).convert('RGBA')
+                    image = images[key]; xy = value['xy']
+                    if (not isinstance(xy, list) or len(xy) != 2 or
+                            any(type(v) not in (int, float) or not math.isfinite(v) for v in xy)):
+                        raise ValueError('invalid native alpha-edge coordinates')
+                    px = tuple(math.floor(v + .5) for v in xy)
+                    if not 0 <= px[0] < image.width or not 0 <= px[1] < image.height:
+                        raise ValueError('alpha-edge sample outside native screenshot')
+                    rgba.append(list(image.getpixel(px)))
+                colors = [[c / 255 for c in pixel[:3]] for pixel in rgba if pixel[3] == 255]
             for value in values:
                 image = images[(value['image']['path'], value['image']['sha256'])]
-                if list(image.size) != group.get('nativePixels'):
+                if list(image.size) != side_size:
                     raise ValueError('continuity requires the frozen 1:1 screenshot size')
                 if side == 'actual' and value['image'] not in native_evidence:
                     native_evidence.append(value['image'])
             measured[side] = {'rgb8': [[round(c * 255) for c in rgb] for rgb in colors],
-                              'maximumChannelDelta': max(abs(a[c] - b[c]) * 255 for a in colors for b in colors for c in range(3))}
+                              'maximumChannelDelta': max((abs(a[c] - b[c]) * 255 for a in colors for b in colors for c in range(3)), default=0)}
+            if rgba is not None:
+                measured[side].update(rgba8=rgba, alpha8=[p[3] for p in rgba],
+                                      opaquePointIndices=[i for i, p in enumerate(rgba) if p[3] == 255])
             if kind in {'appearance-family', 'source-appearance-equivalence', 'surface-linked-appearance'}:
                 measured[side].update(appearance_spread(colors))
         if kind == 'appearance-family':
@@ -980,6 +1056,12 @@ def verify_displayed_relations(source, actual, rule, evidence):
             measured['targetLimit'] = target_limit
         else:
             passed = all(v['maximumChannelDelta'] <= limit + 1e-9 for v in measured.values())
+        if alpha_topology is not None:
+            alpha_pass = (measured['source']['alpha8'] == alpha_topology['sourceAlpha'] and
+                          measured['actual']['alpha8'] == alpha_topology['sourceAlpha'])
+            measured['alphaTopologyPreserved'] = alpha_pass
+            measured['rgbComparisonScope'] = 'opaque-pixels-only'
+            passed = passed and alpha_pass
         results.append({'id': group['id'], 'status': 'pass' if passed else 'fail', **measured})
     return {'status': 'pass' if all(g['status'] == 'pass' for g in results) else 'fail',
             'groups': results, 'nativeEvidence': native_evidence}

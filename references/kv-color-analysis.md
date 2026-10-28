@@ -153,7 +153,7 @@ cardAtmosphereCandidates 仅由环境色及邻近色构成的卡片氛围候选
 
 在现有 `visualIntentProfile` 分别记录 KV 的明亮/深暗程度和淡雅/鲜明/混合的色彩力度，并关联环境、主体及材质锚点；不另建同义色板。判断连续区域、主体面积与重复色群，不能用最艳像素或局部高光代表整体。亮的淡雅 KV 与明亮的鲜红 KV 都可能高明度，但给控件的配色依据不同；深暗环境也可能包围鲜亮主体。
 
-这些证据必须在 Phase 2 生成方案色值前进入每套候选的 `colorClarityPlan.lightnessAndChroma`，按《颜色决策规则》第 3.2 节先决定按钮/CTA/Icon 的突出方向与主体明度、彩度、受光目标；Phase 3 只把用户选定的目标展开为逐角色 Paint Recipe。目标 UI 深浅、KV 明暗与色彩力度、组件实际宿主分别记录。浅色 UI 的页面保持明亮有彩；主要按钮/CTA 先比较明亮方向，当 KV 与页面整体偏浅时，默认采用来自主体、标题或 `metalAccentEvidence` 的干净深色方向并登记 `buttonToneDirection=clean-deep`，只有真实宿主证明明亮方向仍清楚突出时才保留 `bright`。深色 UI 同样按宿主选择明亮或干净深色。本阶段建立目标关系，不提前写入 Figma，也不把单个 Hex 当成最终材质配方。
+这些证据必须在 Phase 2 生成方案色值前进入每套候选的 `colorClarityPlan.lightnessAndChroma`，按《颜色决策规则》第 3.2 节先决定按钮/CTA/Icon 的突出方向与主体明度、彩度、受光目标；Phase 3 只把用户选定的目标展开为逐角色 Paint Recipe。目标 UI 深浅、KV 明暗与色彩力度、组件实际宿主分别记录。浅色 UI 的页面保持明亮有彩；主要按钮/CTA 先比较明亮方向，KV 与页面整体偏浅也不自动改用深色；先满足《颜色决策规则》第 0 节的明度/彩度，再优化字色及宿主关系。只有用户明确选择深色方向时才登记 `buttonToneDirection=clean-deep`。深色 UI 同样按宿主选择明亮或干净深色。本阶段建立目标关系，不提前写入 Figma，也不把单个 Hex 当成最终材质配方。
 
 ## 5. 材质与光照证据
 

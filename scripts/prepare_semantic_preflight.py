@@ -55,7 +55,11 @@ def build(source, manifest, reviewed):
         enriched['crossModeCompositePlan'] = cross_mode_plan(
             source, manifest, reviewed['hiddenRootIds'],
             reviewed['stateRootIds'], reviewed['boundaryRootIds'])
-    visual = visual_registry(source, enriched, reviewed['visualUnits'])
+    max_active = reviewed.get('visualUnitMaxActive', 75)
+    if (type(max_active) is not int or not 1 <= max_active <= 100):
+        raise ValueError('visualUnitMaxActive must be an integer from 1 to 100')
+    visual = visual_registry(source, enriched, reviewed['visualUnits'],
+                             max_active_per_unit=max_active)
     report = {'status': 'ready-for-ledger-and-native-review',
               'sourceHash': source_hash,
               'textNodes': len(text_plan['entries']),

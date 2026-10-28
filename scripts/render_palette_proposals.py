@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Render comparable, non-Figma UI palette proposal boards from declared role colors."""
 import argparse
+import colorsys
+from button_text_policy import decide, POLICY
 import hashlib
 import json
 import math
@@ -44,13 +46,13 @@ def _text_color(rgb):
 def _button_text_color(scheme):
     if "buttonTextColor" in scheme:
         return _rgb(scheme["buttonTextColor"])
+    color = scheme["colors"]["button"]
+    if decide(color)['defaultChosen'] == 'white':
+        return (255, 255, 255)
     if scheme.get("buttonVariant") == "gold-bright":
         return (82, 48, 27)
-    if scheme.get("buttonTextPriority") == "vivid-contrast-white":
-        return (255, 255, 255)
-    # Other buttons need a contextual decision. This is only a provisional
-    # preview fallback; the real host and material are reviewed later.
-    return _text_color(_rgb(scheme["colors"]["button"]))
+    hue, saturation, _ = colorsys.rgb_to_hsv(*(v / 255 for v in _rgb(color)))
+    return tuple(round(v * 255) for v in colorsys.hsv_to_rgb(hue, max(.55, saturation), .28))
 
 
 def _mix(a, b, weight):
@@ -119,11 +121,8 @@ def render_palette_proposals(data, output):
         if "buttonVariant" in scheme and scheme["buttonVariant"] not in {
                 "metallic-analogous", "gold-bright", "clean-deep"}:
             raise ValueError("buttonVariant must be metallic-analogous, gold-bright or clean-deep")
-        if scheme.get("buttonTextPriority") not in {None, "contextual", "vivid-contrast-white"}:
-            raise ValueError("buttonTextPriority must be contextual or vivid-contrast-white")
-        if (scheme.get("buttonTextPriority") == "vivid-contrast-white" and
-                scheme.get("hueStrategy") not in {"contrast", "complementary"}):
-            raise ValueError("vivid-contrast-white priority requires a vivid contrast scheme")
+        if scheme.get("buttonTextPriority") not in {None, POLICY}:
+            raise ValueError("buttonTextPriority must be contrast-1.7; migrate old decisions")
         if ("buttonTextColor" in scheme) != ("buttonTextEvidence" in scheme):
             raise ValueError("buttonTextColor override requires buttonTextEvidence")
         if "buttonTextColor" in scheme:
@@ -162,7 +161,7 @@ def render_palette_proposals(data, output):
         "output": str(output), "pixels": [width, height], "schemeIds": ids,
         "buttonTextColors": {scheme["id"]: "#" + "".join(f"{v:02X}" for v in _button_text_color(scheme))
                              for scheme in schemes},
-        "buttonTextPriorities": {scheme["id"]: scheme.get("buttonTextPriority", "contextual")
+        "buttonTextPriorities": {scheme["id"]: scheme.get("buttonTextPriority", POLICY)
                                  for scheme in schemes},
         "note": "Communication preview only; not a Figma render or material-validation PASS.",
     }

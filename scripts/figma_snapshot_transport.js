@@ -18,12 +18,13 @@ function packThemeBytes(raw){
 }
 function packThemeSnapshotPng(snapshot){
  const raw=utf8Bytes(JSON.stringify(snapshot));if(raw.length>100000000)throw new Error('snapshot too large for one artifact');
- const packed=packThemeBytes(raw),png=atob(THEME_TRANSPORT_PNG),header=new Uint8Array(21),view=new DataView(header.buffer),hash=themeTransportHash(raw);
- for(let i=0;i<5;i++)header[i]='KVSS1'.charCodeAt(i);
+ const zlib=typeof themeZlib!=='undefined';
+ const packed=zlib?themeZlib.deflate(raw,{level:6}):packThemeBytes(raw),png=atob(THEME_TRANSPORT_PNG),header=new Uint8Array(21),view=new DataView(header.buffer),hash=themeTransportHash(raw);
+ const magic=zlib?'KVSS2':'KVSS1';for(let i=0;i<5;i++)header[i]=magic.charCodeAt(i);
  view.setUint32(5,raw.length,false);view.setUint32(9,packed.length,false);view.setUint32(13,hash[0],false);view.setUint32(17,hash[1],false);
  const bytes=new Uint8Array(png.length+header.length+packed.length);for(let i=0;i<png.length;i++)bytes[i]=png.charCodeAt(i);
  bytes.set(header,png.length);bytes.set(packed,png.length+header.length);
- return {bytes,rawBytes:raw.length,packedBytes:packed.length,checksum:hash.map(n=>n.toString(16).padStart(8,'0')).join('')};
+ return {bytes,kind:zlib?'kvss2-zlib-png':'kvss1-png',rawBytes:raw.length,packedBytes:packed.length,checksum:hash.map(n=>n.toString(16).padStart(8,'0')).join('')};
 }
 async function captureThemeBaseline(figma,rootId,fileName='theme-source-snapshot.png',pageId=null){
  const t0=Date.now();
@@ -33,6 +34,6 @@ async function captureThemeBaseline(figma,rootId,fileName='theme-source-snapshot
  const summary=summarizeThemeSource(snapshot),tCapture=Date.now();
  const artifact=packThemeSnapshotPng(snapshot),tPack=Date.now();
  figma.io.write(fileName,artifact.bytes);
- return {...summary,transport:{kind:'kvss1-png',fileName,rawBytes:artifact.rawBytes,packedBytes:artifact.packedBytes,checksum:artifact.checksum},timingMs:{captureAndSummarize:tCapture-t0,pack:tPack-tCapture,total:Date.now()-t0}};
+ return {...summary,transport:{kind:artifact.kind,fileName,rawBytes:artifact.rawBytes,packedBytes:artifact.packedBytes,checksum:artifact.checksum},timingMs:{captureAndSummarize:tCapture-t0,pack:tPack-tCapture,total:Date.now()-t0}};
 }
 if(typeof module!=='undefined')module.exports={utf8Bytes,themeTransportHash,packThemeBytes,packThemeSnapshotPng,captureThemeBaseline};

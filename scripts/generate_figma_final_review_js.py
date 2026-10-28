@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Generate one final review call with exactly two output image blocks."""
+"""Generate one final review call with one lossless snapshot output block."""
 import argparse
 import json
 from pathlib import Path
+from transport_codec import zlib_helper
 
 
 def build(source_id, clone_id, kv_clone_id, source_fingerprint):
     directory = Path(__file__).parent
     names = ('figma_snapshot.js', 'snapshot_fingerprint.js',
              'figma_snapshot_transport.js', 'figma_final_review.js')
-    program = '\n'.join((directory / name).read_text() for name in names)
+    program = zlib_helper() + '\n'.join((directory / name).read_text() for name in names)
     args = ','.join(json.dumps(value) for value in
                     (source_id, clone_id, kv_clone_id, source_fingerprint))
     program += '\nreturn await captureThemeFinalReview(figma,' + args + ');\n'

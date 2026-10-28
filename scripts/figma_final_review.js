@@ -1,5 +1,5 @@
 /* Load figma_snapshot.js, snapshot_fingerprint.js and
- * figma_snapshot_transport.js first. This call emits one KVSS1 image block
+ * figma_snapshot_transport.js first. This call emits one KVSS image block
  * for the lossless clone snapshot. Retrieve the 1:1 full-page visual with
  * get_screenshot as a separate evidence call after this succeeds.
  * Source visual evidence is the Phase 1 screenshot already saved locally;
@@ -32,7 +32,7 @@ async function captureThemeFinalReview(figma, sourceId, cloneId, kvCloneId,
     sourceNodes:sourceSnapshot.nodes.length,cloneNodes:cloneSnapshot.nodes.length,
     kvLocked:kv.locked,kvParentId:kv.parent?.id??null,
     clonePosition:{x:clone.x,y:clone.y},
-    transport:{fileName:snapshotFileName,kind:'kvss1-png',rawBytes:artifact.rawBytes,
+    transport:{fileName:snapshotFileName,kind:artifact.kind,rawBytes:artifact.rawBytes,
                packedBytes:artifact.packedBytes,checksum:artifact.checksum},
     screenshotRequired:{nodeId:cloneId,width:clone.width,height:clone.height,scale:1},
     imageBlockCount:1,capturedAt:new Date().toISOString()};

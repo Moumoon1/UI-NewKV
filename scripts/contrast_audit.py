@@ -89,8 +89,6 @@ def displayed_color(doc, spec, images):
                 raise ValueError('screenshot changed: ' + path)
             from PIL import Image
             image = Image.open(path).convert('RGBA')
-            if image.getchannel('A').getextrema() != (255, 255):
-                raise ValueError('screenshot must contain its actual opaque host')
             images[key] = image
         image = images[key]; xy = spec['xy']
         if (not isinstance(xy, list) or len(xy) != 2 or
@@ -99,7 +97,10 @@ def displayed_color(doc, spec, images):
         pixel_xy = tuple(math.floor(v + 0.5) for v in xy)
         if not 0 <= pixel_xy[0] < image.width or not 0 <= pixel_xy[1] < image.height:
             raise ValueError('sample outside native screenshot')
-        return [c / 255 for c in image.getpixel(pixel_xy)[:3]]
+        pixel = image.getpixel(pixel_xy)
+        if pixel[3] != 255:
+            raise ValueError('sampled screenshot pixel must contain its actual opaque host')
+        return [c / 255 for c in pixel[:3]]
     raise ValueError('use actual solid-layer paths or verified screenshot coordinates')
 
 
@@ -119,7 +120,14 @@ def contrast_policy(spec, expected_policy, expected_context):
             context.get('targetUiMode') not in {'light', 'dark'} or
             context.get('adaptationMode') not in {'color-only', 'style-adaptation'}):
         raise ValueError('invalid contrast mode/style decision context')
-    contextual = (context['sourceUiMode'] != context['targetUiMode'] or
+    priority = context.get('userColorPriority')
+    if priority is not None and (not isinstance(priority, dict) or
+            priority.get('priority') != 'brightness-saturation-before-contrast' or
+            any(not isinstance(priority.get(k), str) or not priority[k].strip()
+                for k in ('userRequest', 'reference'))):
+        raise ValueError('user color priority needs exact request and reference')
+    contextual = (priority is not None or
+                  context['sourceUiMode'] != context['targetUiMode'] or
                   context['adaptationMode'] == 'style-adaptation')
     if policy != ('contextual' if contextual else 'source-baseline'):
         raise ValueError('contrast policy does not match mode/style transition')
@@ -174,6 +182,10 @@ def compare_contrast(source, actual, spec, expected_pairs, expected_orders=None,
                 not math.isfinite(minimum_delta) or not 0 <= minimum_delta <= 200):
             raise ValueError('frozen minimumDeltaE must be finite in [0,200]')
         maximum_delta = frozen.get('maximumDeltaE')
+        if (expected_context and expected_context.get('userColorPriority') and
+                ((pair['kind'] == 'surface' and minimum_delta is None) or
+                 (pair['kind'] != 'surface' and minimum is None))):
+            raise ValueError('user color priority retains explicit readable/separable minima')
         if maximum_delta is not None and (pair['kind'] != 'surface' or
                 type(maximum_delta) not in (int, float) or not math.isfinite(maximum_delta) or
                 not 0 <= maximum_delta <= 200 or

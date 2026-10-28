@@ -3,7 +3,7 @@
  * Read-only: no font loads, component edits, clones or Paint writes.
  * Save the complete returned JSON locally; errors prevent audit acceptance.
  */
-async function snapshotThemeTree(api, rootId) {
+async function snapshotThemeTree(api, rootId, selectedNodeIds = null) {
   const fields = [
     "type", "name", "visible", "locked", "opacity", "blendMode",
     "x", "y", "width", "height", "rotation", "relativeTransform",
@@ -52,7 +52,11 @@ async function snapshotThemeTree(api, rootId) {
     api.skipInvisibleInstanceChildren = false;
     const root = await api.getNodeByIdAsync(rootId);
     if (!root) throw new Error("Root not accessible: " + rootId);
-    const stack = [root];
+    if (selectedNodeIds && (!selectedNodeIds.length || new Set(selectedNodeIds).size !== selectedNodeIds.length))
+      throw new Error('selected snapshot rows must be nonempty and unique');
+    const selected = selectedNodeIds ? await Promise.all(selectedNodeIds.map(id => api.getNodeByIdAsync(id))) : null;
+    if (selected && selected.some(node => !node)) throw new Error('selected snapshot node missing');
+    const stack = selected ? selected.slice().reverse() : [root];
     while (stack.length) {
       const node = stack.pop();
       const row = {id: node.id, parentId: node.parent?.id ?? null, children: [], props: {}};
@@ -97,7 +101,7 @@ async function snapshotThemeTree(api, rootId) {
       if ("children" in node) {
         const children = [...node.children];
         row.children = children.map(c => c.id);
-        stack.push(...children.reverse());
+        if (!selectedNodeIds) stack.push(...children.reverse());
       }
       result.nodes.push(row);
     }

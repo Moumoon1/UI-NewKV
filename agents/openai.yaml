@@ -1,6 +1,6 @@
 interface:
   display_name: "KV UI 换肤"
   short_description: "六色方案确认后以完整预演和真实审计换肤，支持同方案有界修复"
-  default_prompt: "使用 $kv-ui-theme-adapter，先分析新 KV 完整视觉单元与原页面并给出背景、卡片、数字、Icon、按钮、Tab 六色方案；我选定后，只采集一次完整原稿快照，在本地生成并审计全部换色计划，每个冻结事务一次批量写入并集中终审；范围内问题继续有界修复。"
+  default_prompt: "使用 $kv2ui1，先分析新 KV 完整视觉单元与原页面并给出背景、卡片、数字、Icon、按钮、Tab 六色方案；我选定后，只采集一次完整原稿快照，在本地生成并审计全部换色计划，每个冻结事务一次批量写入并集中终审；范围内问题继续有界修复。"
 policy:
   allow_implicit_invocation: true

@@ -358,7 +358,26 @@ def color_relations(before, after, spec, mapping=None, manifest=None):
                 if sorted(covered) != paths:
                     raise ValueError('semantic partition must cover every path exactly once')
                 if surface_paths and not any(set(surface_paths) <= set(p['paths']) for p in partitions):
-                    raise ValueError('semantic partition cannot split source surface members')
+                    # Equal raw paint does not imply equal displayed surfaces:
+                    # a page under atmosphere can be independent of a white card.
+                    # Require native source pixels proving that distinction.
+                    from contrast_audit import displayed_color, delta_e76
+                    evidence = plan.get('sourceSurfaceAppearanceEvidence')
+                    surface_roles = {p['role'] for p in partitions if set(p['paths']) & set(surface_paths)}
+                    if (not isinstance(evidence, list) or
+                            len(evidence) != len(surface_roles) or
+                            {e.get('role') for e in evidence} != surface_roles):
+                        raise ValueError('cannot split source surface members without exact native appearance evidence')
+                    images = {}
+                    appearance_colors = []
+                    for item in evidence:
+                        sample = item.get('sample')
+                        if (not isinstance(sample, dict) or set(sample) != {'image', 'xy'} or
+                                not isinstance(item.get('basis'), str) or not item['basis'].strip()):
+                            raise ValueError('split source surface evidence requires native pixels and source basis')
+                        appearance_colors.append(displayed_color(source, sample, images))
+                    if any(delta_e76(a, b) <= 2 for i, a in enumerate(appearance_colors) for b in appearance_colors[i + 1:]):
+                        raise ValueError('visually equivalent source surfaces cannot be partitioned')
                 plan_status = 'pass' if all(p['status'] == 'pass' for p in partition_results) else 'fail'
             elif surface_linked:
                 if plan is None:
@@ -627,7 +646,8 @@ def seal_gate(state, review):
         raise ValueError("review must follow readback and cannot be in the future")
     checks = validate_visual_checks(state, review)
     return {"schemaVersion": 1, "stateHashVersion": 2, "sceneId": state["sceneId"], "status": "pass",
-            "stateHash": fingerprint, "reviewedAt": review["reviewedAt"],
+            "stateHash": fingerprint, "stateCapturedAt": state["capturedAt"],
+            "reviewedAt": review["reviewedAt"],
             "notes": review["notes"],
             "checks": [{**c, "screenshots": [str(Path(p).resolve()) for p in c["screenshots"]]} for c in checks],
             "evidence": evidence_records(review.get("screenshots"))}
@@ -637,7 +657,20 @@ def check_gate(state, gate):
     valid = (gate.get("schemaVersion") == 1 and gate.get("status") == "pass"
              and state.get("sceneId") == gate.get("sceneId")
              and state_hash(state) == gate.get("stateHash"))
-    valid = valid and timestamp(state["capturedAt"]) >= timestamp(gate["reviewedAt"])
+    try:
+        captured, reviewed = timestamp(state["capturedAt"]), timestamp(gate["reviewedAt"])
+        now = datetime.now(timezone.utc)
+        if "stateCapturedAt" in gate:
+            reviewed_capture = timestamp(gate["stateCapturedAt"])
+            # The reviewed readback itself is valid immediately after sealing;
+            # an unchanged later readback can reuse the same evidence.
+            valid = valid and reviewed_capture <= reviewed <= now and reviewed_capture <= captured <= now
+        else:
+            # Legacy gates did not record which readback was reviewed. Retain
+            # their stricter requirement for a subsequent unchanged readback.
+            valid = valid and reviewed <= captured <= now and reviewed <= now
+    except (ValueError, KeyError, TypeError, AttributeError):
+        valid = False
     evidence = gate.get("evidence", [])
     try:
         valid = valid and bool(evidence) and evidence_records([e["path"] for e in evidence]) == evidence

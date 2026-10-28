@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SKILL_NAME = "kv-ui-theme-adapter"
-ROOT_NAME = "kv-ui-theme-adapter-runs"
-MARKER_NAME = ".kv-ui-theme-adapter-run.json"
+SKILL_NAME = "kv2ui1"
+ROOT_NAME = "kv2ui1-runs"
+MARKER_NAME = ".kv2ui1-run.json"
 
 
 def utc_now() -> str:

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from execution_audit import color_binding_audit, coverage
 from derive_vector_mirrors import inspect as inspect_vector_mirrors
-from generate_theme_apply_js import build as build_writer
+from generate_theme_apply_js import build as build_writer, normalize_geometry_ops, normalize_export_bounds, normalize_kv_placement
 from preflight_instance_writes import inspect as inspect_instance_writes
 from theme_audit import at, differences, digest, equal, parts, save_json, snapshot_document
 
@@ -189,9 +189,14 @@ def build(source, kv_source, manifest, options):
     kv_doc = snapshot_document(kv_source)
     if options.get('schemaVersion') != 1 or options.get('sourceHash') != digest(source_doc):
         raise ValueError('options do not match source snapshot')
-    if options.get('kvSourceId') != kv_source.get('rootId') or \
-            kv_doc['nodes'][kv_source['rootId']]['props'].get('type') != 'FRAME':
-        raise ValueError('explicit complete KV Frame snapshot required')
+    kv_props = kv_doc['nodes'][kv_source['rootId']]['props']
+    single_image_rectangle = (kv_props.get('type') == 'RECTANGLE' and
+                              len(kv_source['nodes']) == 1 and
+                              any(fill.get('type') == 'IMAGE' and fill.get('visible', True)
+                                  for fill in kv_props.get('fills') or []))
+    if (options.get('kvSourceId') != kv_source.get('rootId') or
+            (kv_props.get('type') != 'FRAME' and not single_image_rectangle)):
+        raise ValueError('explicit complete KV Frame or single-image Rectangle snapshot required')
     cover = coverage(source, manifest)
     if cover['status'] != 'pass':
         raise ValueError('color manifest must have complete reviewed channel coverage')
@@ -228,6 +233,18 @@ def build(source, kv_source, manifest, options):
                                  options.get('opacityOps') or [])
     text_alpha_ops = _apply_text_paint_alpha(target_rows,
                                               options.get('textPaintAlphaOps') or [])
+    geometry_ops = normalize_geometry_ops(source, options.get('geometryOps', []))
+    for op in geometry_ops:
+        props = target_rows[op['sourceId']]['props']
+        props[op['property']] = op['after']
+        if 'derivedRelativeTransform' in op:
+            props['relativeTransform'] = deepcopy(op['derivedRelativeTransform']['after'])
+        for derived in op.get('derivedNodeTranslations', []):
+            child = target_rows[derived['sourceId']]['props']
+            child['y'] = derived['after']
+            if 'derivedRelativeTransform' in derived:
+                child['relativeTransform'] = deepcopy(derived['derivedRelativeTransform']['after'])
+    export_bounds = normalize_export_bounds(source, expected, options.get('exportBounds'))
     operations = []
     for row in source['nodes']:
         node_id = row['id']
@@ -278,9 +295,15 @@ def build(source, kv_source, manifest, options):
     write_plan = {'schemaVersion': 1, 'schemeId': options['schemeId'],
                   'sourceRootId': source['rootId'], 'kvSourceId': kv_source['rootId'],
                   'sourceFingerprint': options['sourceFingerprint'],
+                  'kvPlacement': normalize_kv_placement(source, options.get('kvPlacement')),
                   'operations': operations, 'opacityOps': opacity_ops,
+                  'geometryOps': geometry_ops,
                   'detachInstanceIds': detach,
                   'postDetachMapping': 'structural-fingerprint' if detach else None}
+    if export_bounds is not None:
+        write_plan['exportBounds'] = export_bounds
+    if options.get('kvTransitionOverlay') is not None:
+        write_plan['kvTransitionOverlay'] = deepcopy(options['kvTransitionOverlay'])
     mixed_needing_range = [row['id'] for row in source['nodes']
                            if row['props'].get('type') == 'TEXT' and
                            row['props'].get('fills') == {'$mixed': True} and
@@ -307,10 +330,12 @@ def build(source, kv_source, manifest, options):
               'protectedPaths': options.get('protectedPaths') or []}
     node_map = {node_id: node_id for node_id in source_rows}
     return {'expectedClone': expected, 'writePlan': write_plan,
-            'policy': policy, 'nodeMap': node_map,
+            'policy': policy, 'nodeMap': node_map, 'applyJs': writer,
             'summary': {'operations': len(operations),
                         'opacityOps': len(opacity_ops),
                         'textPaintAlphaOps': len(text_alpha_ops),
+                        'geometryOps': len(geometry_ops),
+                        'derivedGeometryTranslations': sum(len(op.get('derivedNodeTranslations', [])) for op in geometry_ops),
                         'detachInstanceIds': len(detach),
                         'allowedChanges': len(policy['allowedChanges']),
                         'writerCharacters': len(writer),

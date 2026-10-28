@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Decode a complete KVSS1 Figma snapshot image artifact; fail closed on loss."""
+"""Decode complete KVSS1/LZ or KVSS2/zlib snapshots; fail closed on loss."""
 import argparse
+import os
+import select
 import base64
 import json
 from pathlib import Path
 import sys
 import termios
 import tty
+import zlib
 
 
 PNG_PREFIX = base64.b64decode(
@@ -55,6 +58,8 @@ def unpack_theme_bytes(raw_size, packed, expected):
 
 def validate_snapshot(raw):
     snapshot = json.loads(raw.decode('utf-8'))
+    if isinstance(snapshot,dict) and snapshot.get('transportDocument'):
+        raise ValueError('partial transport document is not a complete snapshot')
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get('nodes'), list):
         raise ValueError('not a complete snapshot')
     if snapshot.get('errors'):
@@ -66,19 +71,33 @@ def validate_snapshot(raw):
     return snapshot
 
 
-def decode_transport(data):
+def unpack_transport(data):
     if not data.startswith(PNG_PREFIX):
         raise ValueError('image bytes changed or transport prefix missing')
     header = data[len(PNG_PREFIX):len(PNG_PREFIX) + 21]
-    if len(header) != 21 or header[:5] != MAGIC:
-        raise ValueError('KVSS1 payload missing; image channel may have stripped it')
+    if len(header) != 21 or header[:5] not in (MAGIC, b'KVSS2'):
+        raise ValueError('KVSS payload missing; image channel may have stripped it')
     raw_size = int.from_bytes(header[5:9], 'big')
     packed_size = int.from_bytes(header[9:13], 'big')
     expected = (int.from_bytes(header[13:17], 'big'), int.from_bytes(header[17:21], 'big'))
     packed = data[len(PNG_PREFIX) + 21:]
     if len(packed) != packed_size:
         raise ValueError('missing or extra packed bytes')
-    return validate_snapshot(unpack_theme_bytes(raw_size, packed, expected))
+    if header[:5] == MAGIC:
+        raw = unpack_theme_bytes(raw_size, packed, expected)
+    else:
+        if raw_size > 100_000_000 or packed_size > 100_000_000:
+            raise ValueError('transport exceeds size limit')
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(packed, raw_size + 1)
+        if (not decoder.eof or decoder.unused_data or decoder.unconsumed_tail
+                or len(raw) != raw_size or _hash(raw) != expected):
+            raise ValueError('snapshot length, stream or checksum mismatch')
+    return raw
+
+
+def decode_transport(data):
+    return validate_snapshot(unpack_transport(data))
 
 
 def main():
@@ -90,6 +109,10 @@ def main():
                         help='read one base64 image line from stdin')
     parser.add_argument('--stdin-base64-length', type=int,
                         help='read exactly this many base64 bytes from a raw TTY')
+    parser.add_argument('--expected-root')
+    parser.add_argument('--expected-nodes', type=int)
+    parser.add_argument('--part-manifest',type=Path)
+    parser.add_argument('--part-index',type=int)
     args = parser.parse_args()
     if args.stdin_base64_length is not None:
         if not sys.stdin.isatty() or args.stdin_base64_length <= 0:
@@ -98,10 +121,13 @@ def main():
         old = termios.tcgetattr(fd)
         try:
             tty.setraw(fd)
+            print('KVSS1_READY', flush=True)
             chunks = []
             remaining = args.stdin_base64_length
             while remaining:
-                chunk = sys.stdin.buffer.read(min(65536, remaining))
+                if not select.select([fd], [], [], 15)[0]:
+                    raise ValueError('snapshot input timed out; reuse cached capture')
+                chunk = os.read(fd, min(65536, remaining))
                 if not chunk:
                     raise ValueError('truncated base64 snapshot input')
                 chunks.append(chunk)
@@ -115,8 +141,23 @@ def main():
         data = args.input.read_bytes()
     if args.base64 and not args.stdin_base64:
         data = base64.b64decode(b''.join(data.split()), validate=True)
-    snapshot = decode_transport(data)
-    args.output.write_text(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')))
+    if args.part_manifest is not None:
+        if args.part_index is None:
+            raise ValueError('part index required')
+        from snapshot_chunk_audit import validate_part
+        snapshot = validate_part(json.loads(unpack_transport(data).decode('utf-8')),
+                                 json.loads(args.part_manifest.read_text()),args.part_index)
+    else:
+        if args.part_index is not None:
+            raise ValueError('part manifest required')
+        snapshot = decode_transport(data)
+    if args.expected_root is not None and snapshot['rootId'] != args.expected_root:
+        raise ValueError('snapshot root does not match requested frame')
+    if args.expected_nodes is not None and len(snapshot['nodes']) != args.expected_nodes:
+        raise ValueError('snapshot node count does not match capture receipt')
+    temporary = args.output.with_name(args.output.name + '.partial')
+    temporary.write_text(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')))
+    temporary.replace(args.output)
     print(json.dumps({'rootId': snapshot['rootId'], 'nodes': len(snapshot['nodes']),
                       'capturedAt': snapshot.get('capturedAt')}))
 

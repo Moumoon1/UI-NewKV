@@ -12,7 +12,10 @@ import argparse
 import colorsys
 import hashlib
 import json
+import math
 from pathlib import Path
+from button_text_policy import decide
+from color_priority import check_body_colors, explicit_deep_selection
 
 
 def rgb_hex(value):
@@ -62,14 +65,24 @@ def seam(image_path, seam_y, columns, max_step=16, radius=2, transition_start=No
             'note': 'Use only columns confirmed unobstructed in the native crop; inspect the full transition for a second edge.'}
 
 
-def button(button_color, candidates):
+def button(button_color, candidates, tone_direction='bright', body_colors=None,
+           minimum_saturation=None, deep_selection=None, minimum_brightness=None,
+           background_kind='solid', text_backgrounds=None, sample_scope=None):
     background = rgb_hex(button_color)
     background_hue = colorsys.rgb_to_hsv(*background)[0]
-    rows = [{'name': name, 'color': color,
-             'contrast': round(contrast(rgb_hex(color), background), 4)}
-            for name, color in candidates.items()]
-    needed = {'white', 'tinted-white', 'same-family-dark'}
-    errors = []
+    decision = decide(button_color, background_kind, text_backgrounds, sample_scope)
+    rows = []
+    for name, color in candidates.items():
+        ratios = [contrast(rgb_hex(color), rgb_hex(sample))
+                  for sample in decision['textBackgrounds']]
+        rows.append({'name': name, 'color': color,
+                     'contrast': round(min(ratios), 4),
+                     'contrastMax': round(max(ratios), 4)})
+    needed = {'white', decision['defaultChosen']}
+    body_check = check_body_colors(
+        [rgb_hex(c) for c in [button_color] + (body_colors or [])],
+        tone_direction, minimum_saturation, deep_selection, minimum_brightness)
+    errors = list(body_check['errors'])
     if candidates.get('white', '').upper() != '#FFFFFF':
         errors.append('white candidate must be pure #FFFFFF')
     if 'tinted-white' in candidates:
@@ -84,15 +97,18 @@ def button(button_color, candidates):
                 min(abs(hue-background_hue), 1-abs(hue-background_hue)) > .21:
             errors.append('dark label is not from the button color family')
     return {'status': 'pass' if needed <= candidates.keys() and not errors else 'fail',
-            'kind': 'button-text-candidates', 'buttonColor': button_color,
+            'kind': 'button-text-decision', 'buttonColor': button_color,
+            'textDecision': decision,
             'candidates': rows, 'missing': sorted(needed - candidates.keys()),
             'errors': errors,
-            'note': 'All three require one same-size local visual comparison; ratio alone does not choose the winner.'}
+            'bodyColorCheck': body_check,
+            'note': 'Check the selected default at actual size; compare alternatives only for a documented legibility exception.'}
 
 
 def icon(snapshot_path, node_id, top_index, minimum_brightness=None,
          target_ui_mode=None, body_stop_indices=None,
-         tone_direction='bright', non_body_stop_reasons=None):
+         tone_direction='bright', non_body_stop_reasons=None,
+         deep_selection=None, minimum_saturation=None):
     doc = json.loads(Path(snapshot_path).read_text())
     row = next((n for n in doc['nodes'] if n['id'] == node_id), None)
     if row is None:
@@ -117,6 +133,8 @@ def icon(snapshot_path, node_id, top_index, minimum_brightness=None,
         paint.get('blendMode', 'NORMAL') == 'NORMAL' and all(c['alpha'] == 1 for c in colors)
     if target_ui_mode is not None and target_ui_mode not in {'light', 'dark'}:
         raise ValueError('target UI mode must be light or dark')
+    if minimum_brightness is not None and (not math.isfinite(minimum_brightness) or not 0 <= minimum_brightness <= 1):
+        raise ValueError('minimum brightness must be in 0..1')
     if body_stop_indices is None:
         body_stop_indices = list(range(len(colors)))
     if not body_stop_indices or len(set(body_stop_indices)) != len(body_stop_indices) or \
@@ -129,6 +147,10 @@ def icon(snapshot_path, node_id, top_index, minimum_brightness=None,
            not reasons[str(i)].strip() for i in excluded):
         raise ValueError('excluded non-body stops require a reason')
     dim = []
+    if tone_direction == 'clean-deep' and not explicit_deep_selection(deep_selection):
+        raise ValueError('clean-deep requires an explicit user choice and its reference')
+    if minimum_saturation is not None and (not math.isfinite(minimum_saturation) or not 0 <= minimum_saturation <= 1):
+        raise ValueError('minimum saturation must be in 0..1')
     for c in colors:
         value = max(c['rgb'])
         requested_fail = minimum_brightness is not None and value < minimum_brightness
@@ -139,10 +161,13 @@ def icon(snapshot_path, node_id, top_index, minimum_brightness=None,
             if tone_direction == 'bright':
                 light_fail = value < 1
             elif tone_direction == 'gold-bright':
-                light_fail = value < .98
+                light_fail = value < 249/255
+            elif tone_direction == 'clean-deep':
+                light_fail = value < .58 or colorsys.rgb_to_hsv(*c['rgb'])[1] < .4
             elif tone_direction != 'clean-deep':
                 raise ValueError('light Icon tone direction must be bright, gold-bright, or clean-deep')
-        if requested_fail or dark_fail or light_fail:
+        saturation_fail = body and minimum_saturation is not None and colorsys.rgb_to_hsv(*c['rgb'])[1] < minimum_saturation
+        if requested_fail or dark_fail or light_fail or saturation_fail:
             dim.append(c['index'])
     return {'status': 'fail' if not opaque or not colors or dim else 'pass',
             'kind': 'icon-effective-top-paint-precheck', 'nodeId': node_id,
@@ -190,9 +215,23 @@ def inspect_review(review, source_hash, projected_hash):
             try:
                 key = f'{kind}:{row["id"]}'
                 if kind == 'buttons':
-                    checks[key] = fn(row['buttonColor'], row['candidates'])
+                    checks[key] = fn(row['buttonColor'], row['candidates'],
+                                     row.get('toneDirection', 'bright'), row.get('bodyColors'),
+                                     row.get('minimumSaturation'), row.get('deepSelection'),
+                                     row.get('minimumBrightness'), row.get('backgroundKind', 'solid'),
+                                     row.get('textBackgrounds'), row.get('sampleScope'))
                     if row['chosen'] not in row['candidates']:
                         raise ValueError('chosen candidate not present')
+                    if row['chosen'] != checks[key]['textDecision']['defaultChosen']:
+                        exception = row.get('legibilityException', {})
+                        if (not isinstance(exception, dict) or
+                                not isinstance(exception.get('reason'), str) or
+                                not exception['reason'].strip() or
+                                not isinstance(exception.get('affectedText'), str) or
+                                not exception['affectedText'].strip() or
+                                not all(Path(exception.get(k, '')).is_file() for k in
+                                        ('defaultPreviewImage', 'alternativePreviewImage'))):
+                            raise ValueError('non-default text needs a specific legibility exception and local comparison images')
                 else:
                     if review.get('targetUiMode') not in {'light', 'dark'}:
                         raise ValueError('targetUiMode required for Icon brightness gate')
@@ -200,7 +239,8 @@ def inspect_review(review, source_hash, projected_hash):
                                      row['topIndex'], row.get('minimumBrightness'),
                                      review['targetUiMode'], row.get('bodyStopIndices'),
                                      row.get('toneDirection', 'bright'),
-                                     row.get('nonBodyStopReasons'))
+                                     row.get('nonBodyStopReasons'), row.get('deepSelection'),
+                                     row.get('minimumSaturation'))
                 if row.get('visualStatus') != 'pass' or not Path(row.get('previewImage', '')).is_file():
                     raise ValueError('1:1 local visual evidence missing')
             except (KeyError, ValueError, OSError) as exc:
@@ -224,9 +264,17 @@ def main():
                    help='scan the full blend region for a second hard edge')
     b = sub.add_parser('button')
     b.add_argument('--button', required=True)
-    b.add_argument('--white', required=True)
-    b.add_argument('--tinted-white', required=True)
-    b.add_argument('--same-family-dark', required=True)
+    b.add_argument('--white', default='#FFFFFF')
+    b.add_argument('--tinted-white')
+    b.add_argument('--same-family-dark')
+    b.add_argument('--background-kind', choices=('solid', 'gradient'), default='solid')
+    b.add_argument('--text-backgrounds', help='comma-separated effective hex backgrounds under text')
+    b.add_argument('--sample-scope', choices=('text-coverage',))
+    b.add_argument('--tone-direction', choices=('bright', 'gold-bright', 'clean-deep'), default='bright')
+    b.add_argument('--body-colors', help='comma-separated remaining visible body stop hex colors')
+    b.add_argument('--minimum-saturation', type=float)
+    b.add_argument('--minimum-brightness', type=float)
+    b.add_argument('--deep-selection', help='JSON with userRequest and reference for an explicit deep choice')
     i = sub.add_parser('icon')
     i.add_argument('--snapshot', type=Path, required=True)
     i.add_argument('--node-id', required=True)
@@ -237,6 +285,8 @@ def main():
     i.add_argument('--tone-direction', choices=('bright', 'gold-bright', 'clean-deep'),
                    default='bright')
     i.add_argument('--non-body-stop-reasons', help='JSON object keyed by excluded stop index')
+    i.add_argument('--minimum-saturation', type=float)
+    i.add_argument('--deep-selection', help='JSON with userRequest and reference')
     parser.add_argument('--out', type=Path)
     args = parser.parse_args()
     if args.kind == 'seam':
@@ -244,16 +294,25 @@ def main():
                       [int(x) for x in args.columns.split(',')], args.max_step,
                       transition_start=args.transition_start)
     elif args.kind == 'button':
-        result = button(args.button, {'white': args.white,
+        result = button(args.button, {k: v for k, v in {'white': args.white,
                                      'tinted-white': args.tinted_white,
-                                     'same-family-dark': args.same_family_dark})
+                                     'same-family-dark': args.same_family_dark}.items() if v},
+                        args.tone_direction,
+                        args.body_colors.split(',') if args.body_colors else None,
+                        args.minimum_saturation,
+                        json.loads(args.deep_selection) if args.deep_selection else None,
+                        args.minimum_brightness, args.background_kind,
+                        args.text_backgrounds.split(',') if args.text_backgrounds else None,
+                        args.sample_scope)
     else:
         result = icon(args.snapshot, args.node_id, args.top_index,
                       args.minimum_brightness, args.target_ui_mode,
                       ([int(x) for x in args.body_stop_indices.split(',')]
                        if args.body_stop_indices else None), args.tone_direction,
                       (json.loads(args.non_body_stop_reasons)
-                       if args.non_body_stop_reasons else None))
+                       if args.non_body_stop_reasons else None),
+                      json.loads(args.deep_selection) if args.deep_selection else None,
+                      args.minimum_saturation)
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     if args.out:
         args.out.write_text(rendered + '\n')

@@ -64,10 +64,52 @@ def _box(doc, node_id, root_id):
         current = doc['nodes'][current]['parentId']
     props = doc['nodes'][node_id]['props']
     width, height = props.get('width'), props.get('height')
-    if not all(type(v) in (int, float) and math.isfinite(v) and v >= 0
-               for v in (x, y, width, height)):
+    if (not all(type(v) in (int, float) and math.isfinite(v)
+                for v in (x, y, width, height)) or width < 0 or height < 0):
         return None
     return (x, y, x + width, y + height)
+
+
+def _is_root_background(doc, root_id, surface):
+    """Recognize an explicitly reviewed page base carried by the first child.
+
+    A transparent root can delegate its page paint to a full-size child. That
+    child has no separate painted host against which to demand a fake contrast
+    difference. The exception never applies to cards or smaller nested pages.
+    """
+    evidence = surface.get('rootBackgroundEvidence')
+    node_id = surface.get('nodeId')
+    if (surface.get('kind') != 'page' or node_id == root_id or
+            not isinstance(evidence, dict) or evidence.get('rootId') != root_id or
+            not isinstance(evidence.get('basis'), str) or not evidence['basis'].strip() or
+            not isinstance(evidence.get('visualReviewRuleId'), str) or
+            not evidence['visualReviewRuleId'].strip() or node_id not in doc['nodes']):
+        return False
+    root = doc['nodes'][root_id]
+    node = doc['nodes'][node_id]
+
+    def has_paint(candidate_id):
+        candidate = doc['nodes'][candidate_id]
+        if not _visible(doc, candidate_id):
+            return False
+        return any(isinstance(p, dict) and p.get('visible', True) and
+                   p.get('opacity', 1) > 0 for p in candidate['props'].get('fills') or [])
+
+    if node['parentId'] != root_id or has_paint(root_id):
+        return False
+    visible_children = [child for child in root['children'] if _visible(doc, child)]
+    if not visible_children or visible_children[0] != node_id or not has_paint(node_id):
+        return False
+    box, root_box = _box(doc, node_id, root_id), _box(doc, root_id, root_id)
+    if not box or not root_box or evidence.get('rootLocalBox') != list(box):
+        return False
+    width, root_width = box[2] - box[0], root_box[2] - root_box[0]
+    # Permit an explicitly recorded subpixel/few-pixel legacy offset, while
+    # retaining at least 99% horizontal coverage and the full root height.
+    overlap = min(box[2], root_box[2]) - max(box[0], root_box[0])
+    return (root_width > 0 and abs(width - root_width) <= .01 and
+            overlap >= root_width * .99 and abs(box[1] - root_box[1]) <= .01 and
+            box[3] >= root_box[3] - .01)
 
 
 def _candidate_nodes(source):
@@ -365,6 +407,20 @@ def _boundary_group_geometry_valid(candidate, group, root_box):
     native = group.get('nativePixels')
     expected_native = [round(root_box[2] - root_box[0]),
                        round(root_box[3] - root_box[1])]
+    origin = [0, 0]
+    render_bounds = group.get('nativeRenderBounds')
+    if render_bounds is not None:
+        if (not isinstance(render_bounds, list) or len(render_bounds) != 4 or
+                any(type(value) not in (int, float) or not math.isfinite(value)
+                    for value in render_bounds) or
+                render_bounds[2] <= 0 or render_bounds[3] <= 0 or
+                render_bounds[2:] != native or
+                render_bounds[0] > root_box[0] or render_bounds[1] > root_box[1] or
+                render_bounds[0] + render_bounds[2] < root_box[2] or
+                render_bounds[1] + render_bounds[3] < root_box[3]):
+            return False
+        expected_native = render_bounds[2:]
+        origin = render_bounds[:2]
     if native != expected_native:
         return False
     xy = group.get('xy')
@@ -379,8 +435,8 @@ def _boundary_group_geometry_valid(candidate, group, root_box):
     axis = 0 if edge['side'] in {'left', 'right'} else 1
     cross = [point[axis] for point in xy]
     along = [point[1 - axis] for point in xy]
-    coordinate = edge['coordinate']
-    span = edge['span']
+    coordinate = edge['coordinate'] - origin[axis]
+    span = [value - origin[1 - axis] for value in edge['span']]
     crosses = min(cross) <= coordinate <= max(cross)
     if group.get('samplingMode') == 'root-edge-inward':
         # Root-edge exteriors are absent from a clipped native PNG. Require
@@ -400,6 +456,8 @@ def _boundary_group_geometry_valid(candidate, group, root_box):
                    bool(group.get('samplingBasis')))
     return (crosses and
             max(cross) - min(cross) <= 4 and
+            all(0 <= point[0] < native[0] and 0 <= point[1] < native[1]
+                for point in xy) and
             all(span[0] <= value <= span[1] for value in along))
 
 
@@ -438,6 +496,7 @@ def inspect(source, actual, manifest, rules, mapping=None):
         return {'status': 'fail', 'errors': [{'error': 'nonempty surface inventory required'}]}
     surfaces = {}
     classified_nodes = {}
+    root_backgrounds = set()
     active_paths = {row['path'] for row in color_inventory(source)['entries'] if not row['inactive']}
     manifest_by_path = {row.get('path'): row for row in manifest.get('entries', [])
                         if isinstance(row, dict) and isinstance(row.get('path'), str)}
@@ -453,6 +512,18 @@ def inspect(source, actual, manifest, rules, mapping=None):
         if node_id in classified_nodes:
             errors.append({'nodeId': node_id, 'error': 'painted surface node classified more than once'})
         classified_nodes[node_id] = surface_id
+        if 'rootBackgroundEvidence' in surface:
+            evidence = surface.get('rootBackgroundEvidence')
+            evidence = evidence if isinstance(evidence, dict) else {}
+            review = rules.get(evidence.get('visualReviewRuleId'), {})
+            if (_is_root_background(source_doc, root_id, surface) and
+                    review.get('kind') == 'visual' and review.get('applicable') is True and
+                    review.get('acceptance') and
+                    {root_id, node_id} <= set(review.get('scopeNodeIds', []))):
+                root_backgrounds.add(surface_id)
+            else:
+                errors.append({'surfaceId': surface_id,
+                               'error': 'root background needs exact full-page first-child evidence and native visual review'})
         paths = surface.get('carrierPaths')
         if (not isinstance(paths, list) or not paths or len(paths) != len(set(paths)) or
                 not set(paths) <= active_paths):
@@ -474,7 +545,7 @@ def inspect(source, actual, manifest, rules, mapping=None):
                                'error': 'stable page/card/container needs a representative carrier path'})
             host_id = surface.get('hostSurfaceId')
             relation_id = surface.get('boundaryRelationshipId')
-            if kind != 'page' or node_id != root_id:
+            if (kind != 'page' or node_id != root_id) and surface_id not in root_backgrounds:
                 if not isinstance(host_id, str) or not isinstance(relation_id, str):
                     errors.append({'surfaceId': surface_id,
                                    'error': 'non-root stable surface needs hostSurfaceId and boundaryRelationshipId'})
@@ -565,7 +636,7 @@ def inspect(source, actual, manifest, rules, mapping=None):
     relation_index = {row.get('id'): row for row in relationships}
     for surface in surfaces.values():
         if surface['kind'] not in STABLE_KINDS or (
-                surface['kind'] == 'page' and surface['nodeId'] == root_id):
+                surface['kind'] == 'page' and surface['nodeId'] == root_id) or surface['id'] in root_backgrounds:
             continue
         host = surfaces.get(surface.get('hostSurfaceId'))
         relation = relation_index.get(surface.get('boundaryRelationshipId'))
